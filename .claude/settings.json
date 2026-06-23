@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 extract_heat_ref_cache.py)",
+      "Bash(python3 -c ':*)"
+    ]
+  }
+}
