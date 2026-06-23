@@ -93,6 +93,7 @@ def peltier_worker(command_queue, result_queue, shared_data, dict_lock, stop_eve
     """펠티어 모듈을 전담해서 관리할 프로세스 함수."""
     peltier = maze.Peltier_module()
     peltier.use_attenuation_func = True  # 기본값: attenuation_func 사용
+    peltier.start_control()              # ← 추가: is_running=true 보장 (리셋 동작에 의존 X)
     pygame.time.wait(100)
     prev_time = time.time()
     command = None

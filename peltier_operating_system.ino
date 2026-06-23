@@ -20,7 +20,7 @@ bool is_running = true;
 
 // --- 논블로킹 타이머를 위한 변수 ---
 unsigned long previousMillis = 0;
-const long interval = 1000; // 제어 로직을 1000ms 간격으로 실행
+const long interval = 100; // 제어 로직을 100ms 간격으로 실행
 
 void setup() {
   Serial.begin(115200);
@@ -40,7 +40,6 @@ void setup() {
 
   Serial.println("Arduino Ready. Command-based control.");
 }
-
 
 void loop() {
   // 1. 시리얼 명령은 매 루프마다 최대한 빨리 처리 (지연 없음)
@@ -120,14 +119,14 @@ void handleSerialCommands() {
 // 냉각(COOLING)과 가열(HEATING) duty를 각 Zone별로 독립 설정
 
 // ---- 냉각 duty 설정 ----
-int cool_z1 = 2397;  // 76.7%
-int cool_z2 = 2520;  // 80.0%
-int cool_z3 = 2520;  // 80.0%
+int cool_z1 = 2000;  // 64.0%
+int cool_z2 = 2200;  // 70.0%
+int cool_z3 = 2200;  // 70.0%
 
 // ---- 가열 duty 설정 ----
-int heat_z1 = 2141;  // 68.5%
-int heat_z2 = 2312;  // 74.0%
-int heat_z3 = 2520;  // 80.0%
+int heat_z1 = 1750;  // 56.0%
+int heat_z2 = 2000;  // 64.0%
+int heat_z3 = 2200;  // 70.0%
 
 bool readFloatArgument(String command, float &value) {
   int commaIndex = command.indexOf(',');
@@ -203,7 +202,7 @@ void runTemperatureControl() {
   float error = target_temperature - average_temp;
   float abs_error = (error < 0) ? -error : error;
 
-  if (abs_error <= 0.3) {
+  if (abs_error <= 0.5) {
     stopMotor();
     return;
   }
@@ -211,15 +210,15 @@ void runTemperatureControl() {
   if (error < 0) {
     // 현재 온도가 목표보다 높음 → 냉각 (RPWM)
     int duty;
-    if      (abs_error <= 0.5) duty = cool_z1;
-    else if (abs_error <= 3.0) duty = cool_z2;
+    if      (abs_error <= 1.5) duty = cool_z1;
+    else if (abs_error <= 3.5) duty = cool_z2;
     else                       duty = cool_z3;
     controlMotor(duty, 0);
   } else {
     // 현재 온도가 목표보다 낮음 → 가열 (LPWM)
     int duty;
-    if      (abs_error <= 0.5) duty = heat_z1;
-    else if (abs_error <= 3.0) duty = heat_z2;
+    if      (abs_error <= 1.5) duty = heat_z1;
+    else if (abs_error <= 3.5) duty = heat_z2;
     else                       duty = heat_z3;
     controlMotor(0, duty);
   }
