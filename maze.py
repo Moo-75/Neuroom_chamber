@@ -27,6 +27,10 @@ class Display:
             self.screen = pygame.display.set_mode((data['display']['width'],data['display']['height']), pygame.NOFRAME)
             self.screen.fill((0, 0, 0))
             pygame.mouse.set_visible(False)
+            # set_visible가 안 먹히는 환경 대비: 투명 커서 강제 + 마우스를 구석으로
+            blank = pygame.cursors.Cursor((8, 8), (0, 0), (0,) * 8, (0,) * 8)
+            pygame.mouse.set_cursor(blank)
+            pygame.mouse.set_pos(0, 0)
 
         # 이미지 사전 로드 (json 파일 기준 디렉토리에서 절대경로로 로드)
         img_dir = os.path.dirname(os.path.abspath(dir))
