@@ -119,29 +119,43 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 7) 마우스 커서 숨김 도구 (unclutter + xdotool)
-#    pygame(SDL/X11)에서는 pygame.mouse.set_visible(False)가 이 환경에서 무시되어
-#    X11 시스템 커서가 task 화면 위에 남는다. → OS 레벨에서 unclutter로 숨긴다.
-#    - unclutter: 마우스가 멈추면 커서 숨김(움직이면 표시).
-#    - xdotool : task 시작 시 포인터를 프로그램이 한 번 미세하게 움직여 unclutter가
-#                새로 뜬 pygame 창 위에서 '즉시' 숨기도록 트리거하는 데 사용
-#                (그렇지 않으면 사용자가 마우스를 움직이기 전까지 커서가 남음).
-#    실제 숨김/복구 제어는 maze.Display 가 task 수명에 맞춰 직접 수행한다
-#    (task 동안 -idle 0 = 항상 숨김, 종료 시 -idle 2 = 움직이면 표시 로 복구).
-#    - autostart 의 -idle 2 는 task 밖(데스크톱)에서 '멈추면 숨고 움직이면 표시'.
+# 7) 마우스 커서 자동 숨김 (labwc / Wayland)
+#    이 시스템은 Raspberry Pi Connect 화면 공유 때문에 Wayland(labwc)를 쓴다.
+#    Wayland에서는 pygame.mouse.set_visible(False) / unclutter / xdotool 같은
+#    X11 방식이 모두 무시된다(커서를 labwc 컴포지터가 직접 그림).
+#    → labwc의 'HideCursor' 액션 + swayidle(idle 감지) + wtype(키 입력 시뮬레이션)으로
+#      "N초 멈추면 숨김 / 움직이면 표시"를 구현한다. task 중에는 마우스를 안 쓰므로
+#      계속 숨겨진 상태가 유지된다.
+#    참고: https://github.com/labwc/labwc/discussions/3190
 # -----------------------------------------------------------------------------
 echo ""
-echo "[7/8] 마우스 커서 숨김 도구(unclutter, xdotool) 설치/등록 ..."
-sudo apt remove -y unclutter-xfixes 2>/dev/null || true   # xfixes 버전 충돌 제거
-sudo apt install -y unclutter xdotool
-mkdir -p "${HOME}/.config/autostart"
-cat > "${HOME}/.config/autostart/unclutter.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=unclutter
-Exec=unclutter -idle 2
-EOF
-echo "  - autostart 등록됨 (재부팅/로그인 후 적용)"
+echo "[7/8] 마우스 커서 자동 숨김(labwc HideCursor + swayidle) 설정 ..."
+sudo apt remove -y unclutter unclutter-xfixes xdotool 2>/dev/null || true  # X11 잔재 제거
+sudo apt install -y swayidle wtype
+
+# labwc 사용자 설정 준비(기본 설정을 복사해 패널/단축키가 깨지지 않게)
+mkdir -p "${HOME}/.config/labwc"
+[ -f "${HOME}/.config/labwc/rc.xml" ]    || cp /etc/xdg/labwc/rc.xml    "${HOME}/.config/labwc/rc.xml" 2>/dev/null || true
+[ -f "${HOME}/.config/labwc/autostart" ] || cp /etc/xdg/labwc/autostart "${HOME}/.config/labwc/autostart" 2>/dev/null || true
+touch "${HOME}/.config/labwc/rc.xml" "${HOME}/.config/labwc/autostart"
+
+# HideCursor 키바인드(Alt+Super+h)를 rc.xml의 <keyboard> 안에 추가
+if grep -q 'HideCursor' "${HOME}/.config/labwc/rc.xml"; then
+    echo "  - HideCursor 키바인드 이미 있음"
+elif grep -q '<keyboard>' "${HOME}/.config/labwc/rc.xml"; then
+    sed -i '0,/<keyboard>/s//<keyboard>\n    <keybind key="A-W-h"><action name="HideCursor"\/><\/keybind>/' "${HOME}/.config/labwc/rc.xml"
+    echo "  - HideCursor 키바인드 추가됨"
+else
+    echo "  ! rc.xml 에 <keyboard> 섹션이 없어 키바인드 자동 추가 실패 → 수동 추가 필요"
+fi
+
+# swayidle 자동 실행(2초 멈추면 숨김 / 움직이면 표시)
+if grep -q 'swayidle' "${HOME}/.config/labwc/autostart"; then
+    echo "  - swayidle autostart 이미 있음"
+else
+    echo "swayidle -w timeout 2 'wtype -M alt -M logo -P h' &" >> "${HOME}/.config/labwc/autostart"
+    echo "  - swayidle autostart 등록됨 (재부팅 후 적용)"
+fi
 
 # -----------------------------------------------------------------------------
 # 8) 챔버 코드 클론(또는 갱신)
