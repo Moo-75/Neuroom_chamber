@@ -124,36 +124,61 @@ fi
 #    Wayland에서는 pygame.mouse.set_visible(False) / unclutter / xdotool 같은
 #    X11 방식이 모두 무시된다(커서를 labwc 컴포지터가 직접 그림).
 #    → labwc의 'HideCursor' 액션 + swayidle(idle 감지) + wtype(키 입력 시뮬레이션)으로
-#      "N초 멈추면 숨김 / 움직이면 표시"를 구현한다. task 중에는 마우스를 안 쓰므로
+#      "N초 멈추면 숨김 / 움직이면 표시"를 구현한다. task/터치를 안 쓰는 동안은
 #      계속 숨겨진 상태가 유지된다.
 #    참고: https://github.com/labwc/labwc/discussions/3190
+#
+#    주의:
+#    - labwc는 시스템(/etc/xdg/labwc/autostart)과 사용자 autostart를 '둘 다' 실행한다.
+#      사용자 autostart를 시스템 것 복사로 만들면 패널(wf-panel-pi)이 두 번 떠서
+#      작업표시줄이 두 줄이 된다. → 사용자 autostart에는 'swayidle 줄만' 넣는다.
+#    - rc.xml은 사용자 것이 있으면 그걸 쓴다(RPi 기본은 루트가 <openbox_config>이고
+#      <keyboard> 섹션이 없을 수 있음). 그래서 <keyboard>가 없으면 닫는 루트 태그
+#      (</openbox_config> 또는 </labwc_config>) 앞에 <keyboard> 블록째로 넣는다.
 # -----------------------------------------------------------------------------
 echo ""
 echo "[7/8] 마우스 커서 자동 숨김(labwc HideCursor + swayidle) 설정 ..."
 sudo apt remove -y unclutter unclutter-xfixes xdotool 2>/dev/null || true  # X11 잔재 제거
 sudo apt install -y swayidle wtype
 
-# labwc 사용자 설정 준비(기본 설정을 복사해 패널/단축키가 깨지지 않게)
 mkdir -p "${HOME}/.config/labwc"
-[ -f "${HOME}/.config/labwc/rc.xml" ]    || cp /etc/xdg/labwc/rc.xml    "${HOME}/.config/labwc/rc.xml" 2>/dev/null || true
-[ -f "${HOME}/.config/labwc/autostart" ] || cp /etc/xdg/labwc/autostart "${HOME}/.config/labwc/autostart" 2>/dev/null || true
-touch "${HOME}/.config/labwc/rc.xml" "${HOME}/.config/labwc/autostart"
+RC_XML="${HOME}/.config/labwc/rc.xml"
+AUTOSTART="${HOME}/.config/labwc/autostart"
 
-# HideCursor 키바인드(Alt+Super+h)를 rc.xml의 <keyboard> 안에 추가
-if grep -q 'HideCursor' "${HOME}/.config/labwc/rc.xml"; then
-    echo "  - HideCursor 키바인드 이미 있음"
-elif grep -q '<keyboard>' "${HOME}/.config/labwc/rc.xml"; then
-    sed -i '0,/<keyboard>/s//<keyboard>\n    <keybind key="A-W-h"><action name="HideCursor"\/><\/keybind>/' "${HOME}/.config/labwc/rc.xml"
-    echo "  - HideCursor 키바인드 추가됨"
-else
-    echo "  ! rc.xml 에 <keyboard> 섹션이 없어 키바인드 자동 추가 실패 → 수동 추가 필요"
+# --- HideCursor 키바인드(Alt+Super+h)를 rc.xml에 추가 ---
+# rc.xml이 없으면 최소 유효 파일 생성(이미 있으면 사용자 설정 보존)
+if [ ! -f "${RC_XML}" ]; then
+    cat > "${RC_XML}" <<'EOF'
+<?xml version="1.0"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+</openbox_config>
+EOF
 fi
 
-# swayidle 자동 실행(2초 멈추면 숨김 / 움직이면 표시)
-if grep -q 'swayidle' "${HOME}/.config/labwc/autostart"; then
+if grep -q 'HideCursor' "${RC_XML}"; then
+    echo "  - HideCursor 키바인드 이미 있음"
+elif grep -q '<keyboard>' "${RC_XML}"; then
+    # 기존 <keyboard> 섹션 안에 keybind 삽입
+    sed -i '0,/<keyboard>/s##<keyboard>\n    <keybind key="A-W-h"><action name="HideCursor"/></keybind>#' "${RC_XML}"
+    echo "  - HideCursor 키바인드 추가됨(<keyboard> 안에)"
+elif grep -q '</openbox_config>' "${RC_XML}"; then
+    # <keyboard>가 없으면 닫는 루트 태그 앞에 블록째로 삽입
+    sed -i 's#</openbox_config>#  <keyboard>\n    <keybind key="A-W-h"><action name="HideCursor"/></keybind>\n  </keyboard>\n</openbox_config>#' "${RC_XML}"
+    echo "  - HideCursor 키바인드 추가됨(<keyboard> 블록 생성)"
+elif grep -q '</labwc_config>' "${RC_XML}"; then
+    sed -i 's#</labwc_config>#  <keyboard>\n    <keybind key="A-W-h"><action name="HideCursor"/></keybind>\n  </keyboard>\n</labwc_config>#' "${RC_XML}"
+    echo "  - HideCursor 키바인드 추가됨(<keyboard> 블록 생성)"
+else
+    echo "  ! rc.xml 형식을 인식 못해 키바인드 자동 추가 실패 → 수동 추가 필요"
+fi
+
+# --- swayidle 자동 실행(2초 멈추면 숨김 / 움직이면 표시) ---
+# 사용자 autostart에는 시스템 기본을 복사하지 말 것(패널 중복 방지). 우리 줄만 추가.
+touch "${AUTOSTART}"
+if grep -q 'swayidle' "${AUTOSTART}"; then
     echo "  - swayidle autostart 이미 있음"
 else
-    echo "swayidle -w timeout 2 'wtype -M alt -M logo -P h' &" >> "${HOME}/.config/labwc/autostart"
+    echo "swayidle -w timeout 2 'wtype -M alt -M logo -P h' &" >> "${AUTOSTART}"
     echo "  - swayidle autostart 등록됨 (재부팅 후 적용)"
 fi
 
