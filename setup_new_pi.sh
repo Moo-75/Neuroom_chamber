@@ -34,7 +34,7 @@ echo "================================================================"
 #    나머지: pygame(디스플레이) / opencv(USB웹캠) / serial(Arduino) / pytz / numpy
 # -----------------------------------------------------------------------------
 echo ""
-echo "[1/7] 라이브러리 설치 ..."
+echo "[1/8] 라이브러리 설치 ..."
 sudo apt update
 sudo apt install -y git python3-dev \
         python3-pygame python3-opencv \
@@ -53,7 +53,7 @@ print('    OK, BCM4 input =', G.input(4)); G.cleanup()" \
 # 2) 하드웨어 그룹 권한 (GPIO / 시리얼 / 카메라 / I2C / SPI / 오디오 / 입력)
 # -----------------------------------------------------------------------------
 echo ""
-echo "[2/7] 사용자(${USER}) 그룹 권한 추가 ..."
+echo "[2/8] 사용자(${USER}) 그룹 권한 추가 ..."
 sudo usermod -aG gpio,dialout,video,i2c,spi,audio,input "${USER}"
 
 # -----------------------------------------------------------------------------
@@ -65,7 +65,7 @@ sudo usermod -aG gpio,dialout,video,i2c,spi,audio,input "${USER}"
 #       link_arduino.sh 재실행)
 # -----------------------------------------------------------------------------
 echo ""
-echo "[3/7] Arduino udev 규칙(/dev/arduino) 설치 ..."
+echo "[3/8] Arduino udev 규칙(/dev/arduino) 설치 ..."
 sudo tee /etc/udev/rules.d/99-arduino.rules >/dev/null <<'EOF'
 SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0043", SYMLINK+="arduino", MODE="0666", ENV{ID_MM_DEVICE_IGNORE}="1"
 EOF
@@ -75,7 +75,7 @@ sudo udevadm control --reload && sudo udevadm trigger
 # 4) ModemManager 비활성화 (새로 꽂힌 /dev/ttyACM* 를 모뎀으로 오인해 점유 방지)
 # -----------------------------------------------------------------------------
 echo ""
-echo "[4/7] ModemManager 비활성화 ..."
+echo "[4/8] ModemManager 비활성화 ..."
 sudo systemctl disable --now ModemManager 2>/dev/null || true
 
 # -----------------------------------------------------------------------------
@@ -87,7 +87,7 @@ sudo systemctl disable --now ModemManager 2>/dev/null || true
 #    - 시간대 / WiFi 국가   : Imager에서 이미 했으면 중복이라도 무해
 # -----------------------------------------------------------------------------
 echo ""
-echo "[5/7] 시리얼 콘솔 / 자동로그인 / 시간대 / WiFi 국가 설정 ..."
+echo "[5/8] 시리얼 콘솔 / 자동로그인 / 시간대 / WiFi 국가 설정 ..."
 if sudo raspi-config nonint do_serial_hw 0 2>/dev/null && \
    sudo raspi-config nonint do_serial_cons 0 2>/dev/null ; then
     echo "  - 시리얼(하드웨어+콘솔) 활성화 완료"
@@ -106,7 +106,7 @@ sudo raspi-config nonint do_wifi_country KR || true
 #    ~/.bashrc 에 박아 매번 입력할 필요가 없게 한다.
 # -----------------------------------------------------------------------------
 echo ""
-echo "[6/7] DISPLAY=:0 영속화 (~/.bashrc) ..."
+echo "[6/8] DISPLAY=:0 영속화 (~/.bashrc) ..."
 if ! grep -q '^export DISPLAY=:0' "${HOME}/.bashrc" 2>/dev/null; then
     {
         echo ''
@@ -119,10 +119,35 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 7) 챔버 코드 클론(또는 갱신)
+# 7) 마우스 커서 숨김 도구 (unclutter + xdotool)
+#    pygame(SDL/X11)에서는 pygame.mouse.set_visible(False)가 이 환경에서 무시되어
+#    X11 시스템 커서가 task 화면 위에 남는다. → OS 레벨에서 unclutter로 숨긴다.
+#    - unclutter: 마우스가 멈추면 커서 숨김(움직이면 표시).
+#    - xdotool : task 시작 시 포인터를 프로그램이 한 번 미세하게 움직여 unclutter가
+#                새로 뜬 pygame 창 위에서 '즉시' 숨기도록 트리거하는 데 사용
+#                (그렇지 않으면 사용자가 마우스를 움직이기 전까지 커서가 남음).
+#    실제 숨김/복구 제어는 maze.Display 가 task 수명에 맞춰 직접 수행한다
+#    (task 동안 -idle 0 = 항상 숨김, 종료 시 -idle 2 = 움직이면 표시 로 복구).
+#    - autostart 의 -idle 2 는 task 밖(데스크톱)에서 '멈추면 숨고 움직이면 표시'.
 # -----------------------------------------------------------------------------
 echo ""
-echo "[7/7] 챔버 코드 받기 -> ${CLONE_DIR}"
+echo "[7/8] 마우스 커서 숨김 도구(unclutter, xdotool) 설치/등록 ..."
+sudo apt remove -y unclutter-xfixes 2>/dev/null || true   # xfixes 버전 충돌 제거
+sudo apt install -y unclutter xdotool
+mkdir -p "${HOME}/.config/autostart"
+cat > "${HOME}/.config/autostart/unclutter.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=unclutter
+Exec=unclutter -idle 2
+EOF
+echo "  - autostart 등록됨 (재부팅/로그인 후 적용)"
+
+# -----------------------------------------------------------------------------
+# 8) 챔버 코드 클론(또는 갱신)
+# -----------------------------------------------------------------------------
+echo ""
+echo "[8/8] 챔버 코드 받기 -> ${CLONE_DIR}"
 mkdir -p "$(dirname "${CLONE_DIR}")"
 if [ -d "${CLONE_DIR}/.git" ]; then
     git -C "${CLONE_DIR}" pull --ff-only || true

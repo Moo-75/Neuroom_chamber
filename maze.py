@@ -7,9 +7,47 @@ import RPi.GPIO as GPIO #general purpose Input/Output
 import time
 import random
 import serial
+import subprocess
+import shutil
+import atexit
 
 GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BCM)
+
+
+# task(pygame) 실행 동안만 마우스 커서를 숨기기 위한 헬퍼.
+# 이 환경에서는 pygame.mouse.set_visible(False)가 무시되므로 OS 레벨(unclutter)로 숨긴다.
+# - task 동안: unclutter -idle 0 (항상 숨김)
+# - task 종료(프로세스 종료) 시: unclutter -idle 2 로 복구(움직이면 표시)
+# 새로 뜬 pygame 창 위에서는 다음 마우스 움직임 전까지 unclutter가 숨기질 못하므로,
+# xdotool 로 포인터를 한 번 미세하게 움직여 즉시 숨김을 트리거한다.
+_cursor_hidden_for_session = False
+
+
+def hide_cursor_for_session():
+    """pygame 창이 떠 있는 동안 마우스 커서를 숨긴다(프로세스당 1회)."""
+    global _cursor_hidden_for_session
+    if _cursor_hidden_for_session:
+        return
+    if not shutil.which("unclutter"):
+        return  # 도구가 없으면 조용히 통과(개발 PC 등)
+    _cursor_hidden_for_session = True
+
+    # 데스크톱 autostart 등 기존 unclutter 종료 후, task 동안은 항상 숨김으로 실행
+    subprocess.run(["pkill", "-x", "unclutter"], check=False)
+    subprocess.Popen(["unclutter", "-idle", "0", "-root"])
+
+    # 새로 뜬 창 위에서 즉시 숨겨지도록 포인터를 살짝 움직여 unclutter를 트리거
+    if shutil.which("xdotool"):
+        subprocess.run(["xdotool", "mousemove_relative", "--", "1", "0"], check=False)
+        subprocess.run(["xdotool", "mousemove_relative", "--", "-1", "0"], check=False)
+
+    def _restore():
+        # task 종료 후엔 '멈추면 숨고 움직이면 표시'(-idle 2)로 복구
+        subprocess.run(["pkill", "-x", "unclutter"], check=False)
+        subprocess.Popen(["unclutter", "-idle", "2"])
+
+    atexit.register(_restore)
 
 df = {'Trial':[], 'Position':[],'Length':[], 
         'Width':[],'Thickness':[],'Color':[], 'Poked Site':[]}
@@ -27,10 +65,9 @@ class Display:
             self.screen = pygame.display.set_mode((data['display']['width'],data['display']['height']), pygame.NOFRAME)
             self.screen.fill((0, 0, 0))
             pygame.mouse.set_visible(False)
-            # set_visible가 안 먹히는 환경 대비: 투명 커서 강제 + 마우스를 구석으로
-            blank = pygame.cursors.Cursor((8, 8), (0, 0), (0,) * 8, (0,) * 8)
-            pygame.mouse.set_cursor(blank)
-            pygame.mouse.set_pos(0, 0)
+            pygame.display.update()  # 창을 실제로 매핑한 뒤 커서를 숨겨야 함
+            # 이 환경에선 set_visible가 무시되므로 OS 레벨(unclutter)로 task 동안 숨김
+            hide_cursor_for_session()
 
         # 이미지 사전 로드 (json 파일 기준 디렉토리에서 절대경로로 로드)
         img_dir = os.path.dirname(os.path.abspath(dir))
