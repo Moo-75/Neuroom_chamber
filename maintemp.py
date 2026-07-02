@@ -195,6 +195,7 @@ if __name__ == '__main__':
     
     temperature_seton = input('If do you need temperature set on, press y  ')
     need_seton = False
+    initial_target_temp = None
 
     if temperature_seton == "y" or temperature_seton == "Y":
         target_temp = input('Please enter the target temperature : ')
@@ -202,6 +203,7 @@ if __name__ == '__main__':
             try:
                 target_temp = float(target_temp)
                 need_seton = True
+                initial_target_temp = target_temp
                 break
             except:
                 target_temp = input('Please reenter the target temperature : ')
@@ -218,6 +220,7 @@ if __name__ == '__main__':
         "predicted_temp" : None,
         "delta_pwm" : 0,
         "ref_pwm" : 0,
+        "initial_target_temp" : initial_target_temp,
     })
     dict_lock = multiprocessing.Lock()
 
@@ -303,8 +306,8 @@ To start enter number you want to run
     [TRL_main] TRL_main: 항상 양쪽 큐 동시; hot=+bump+드리프트반전, cold=-bump+드리프트유지
 
     === Temperature Lift (선행 학습) ===
-    [TL1] TL1: left-only, choice +4/5/6°C, -0.07°C/s drift (20s choice / 40s feedback)
-    [TL2] TL2: TL1과 동일, choice +2.5/3/3.5°C
+    [TL1] TL1: left-only, choice +5°C, no-choice -5°C (20s choice / 40s feedback)
+    [TL2] TL2: left-only, choice +3/3.5/4°C, no-choice -1.5/-2/-2.5°C (10s choice / 20s feedback)
 
     [0] Exit
 """)

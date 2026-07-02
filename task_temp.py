@@ -2607,27 +2607,88 @@ class Task:
 
     def _run_temperature_lift(self, bump_choices,
                               start_temp=10.0, temp_min=10.0, temp_max=40.0,
-                              drift_rate=-0.07, choice_window=20.0, feedback_window=40.0,
+                              no_choice_drop_choices=(2.5, 3.0, 3.5),
+                              bump_balance_block=20,
+                              no_choice_balance_block=20,
+                              choice_window=20.0, feedback_window=40.0,
                               task_time=60, blink_period=1.0,
-                              trial_start_reward=0.1, choice_reward=0.1):
+                              trial_start_reward=1.0, choice_reward=1.0):
         """
         TL 공통 코어. Left-only, trial-based.
         - 한 trial: choice window(기본 20s) + feedback window(기본 40s).
-        - 세션 전체 drift_rate(기본 -0.07°C/s)로 setpoint 하강([temp_min, temp_max] clamp).
+        - Continuous drift is disabled; the setpoint is held during the choice window.
         - choice window 동안 left poke(sensor[1]) 발생 시 즉시 feedback 시작.
           미발생 시 no choice로 기록 후 feedback 시작. left 외 poke는 무시.
         - choice한 경우 feedback window 동안 drift 정지 + (choice 시점 측정 avg + bump)로 SET_TEMP,
-          끝까지 유지. no choice면 drift 계속.
-        - choice 상승폭 bump는 bump_choices에서 random.choice.
+          끝까지 유지. no choice면 feedback 시작 때 balanced random drop을 적용.
+        - choice 상승폭 bump는 20-trial balanced random bag에서 선택.
         - sound cue = reward 밸브 소리: trial 시작 + left poke 시 reward.give.
         """
         file_name_td = self.file_trialdata + "_trial-wise.csv"
         directory = os.path.dirname(file_name_td)
         col_name_td = ['mouseID', 'Day', 'Task', 'Trial', 'Time', 'Event',
-                       'Current_Temp', 'Target_Temp', 'Choice', 'Bump', 'RT']
+                       'Current_Temp', 'Target_Temp', 'Choice', 'Bump', 'RT',
+                       'OutcomeDelta', 'OutcomeTarget_Temp']
+
+        no_choice_drop_bag = []
+        bump_bag = []
+        bump_block_index = 0
+        no_choice_drop_block_index = 0
+
+        def make_balanced_bag(values, block_size, block_index):
+            values = list(values)
+            if not values:
+                return []
+            block_size = max(1, int(block_size))
+            base_count = block_size // len(values)
+            extra_count = block_size % len(values)
+            counts = [base_count] * len(values)
+            for i in range(extra_count):
+                counts[(block_index + i) % len(values)] += 1
+            bag = []
+            for value, count in zip(values, counts):
+                bag.extend([value] * count)
+            random.shuffle(bag)
+            return bag
+
+        def next_bump():
+            nonlocal bump_bag, bump_block_index
+            if not bump_bag:
+                bump_bag = make_balanced_bag(
+                    bump_choices, bump_balance_block, bump_block_index
+                )
+                bump_block_index += 1
+            return bump_bag.pop()
+
+        def next_no_choice_drop():
+            nonlocal no_choice_drop_bag, no_choice_drop_block_index
+            if not no_choice_drop_bag:
+                no_choice_drop_bag = make_balanced_bag(
+                    no_choice_drop_choices,
+                    no_choice_balance_block,
+                    no_choice_drop_block_index,
+                )
+                no_choice_drop_block_index += 1
+            return no_choice_drop_bag.pop()
+
+        shared_start_temp = None
+        with self.dict_lock:
+            shared_start_temp = self.shared_data.get("initial_target_temp")
+        shared_start_temp = self._sanitize_temperature(shared_start_temp)
+        if shared_start_temp is not None:
+            if shared_start_temp < temp_min or shared_start_temp > temp_max:
+                clamped_start = max(temp_min, min(shared_start_temp, temp_max))
+                print(
+                    f"[TL] initial target {shared_start_temp}°C is outside "
+                    f"{temp_min}-{temp_max}°C; clamped to {clamped_start}°C"
+                )
+                start_temp = clamped_start
+            else:
+                start_temp = shared_start_temp
+            print(f"[TL] using maintemp set-on target as start_temp: {start_temp}°C")
 
         self.peltier_queue.put(("SET_TEMP", start_temp))
-        self.peltier_queue.put(("SET_ATTENUATION_DIRECT", (drift_rate, temp_min, temp_max)))
+        self.peltier_queue.put(("SET_ATTENUATION_DIRECT", (0.0, temp_min, temp_max)))
 
         trial = 0
         start_Ex = time.time()
@@ -2640,21 +2701,23 @@ class Task:
 
         dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                   time.time() - self.start_time, "SessionStart",
-                  curr_temp, target_temp, 'n', 'n', 'n']
+                  curr_temp, target_temp, 'n', 'n', 'n', 'n', 'n']
         self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
         session_done = False
         while (time.time() - start_Ex) < task_time * 60 and not session_done:
             trial += 1
+            outcome_delta = 'n'
+            outcome_target = 'n'
 
-            # --- Trial 시작: drift 재무장 + sound cue(밸브 소리) ---
-            self.peltier_queue.put(("SET_ATTENUATION_DIRECT", (drift_rate, temp_min, temp_max)))
+            # --- Trial 시작: target hold + sound cue(밸브 소리) ---
+            self.peltier_queue.put(("SET_ATTENUATION_DIRECT", (0.0, temp_min, temp_max)))
             self.reward.give(trial_start_reward)
             curr_temp, target_temp = self._get_shared_temperatures()
-            print(f"\n[TL] --- Trial {trial} start (drift {drift_rate}°C/s) ---")
+            print(f"\n[TL] --- Trial {trial} start (no drift) ---")
             dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                       time.time() - self.start_time, "TrialStart",
-                      curr_temp, target_temp, 'n', 'n', 'n']
+                      curr_temp, target_temp, 'n', 'n', 'n', 'n', 'n']
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
             # --- Choice window: left cue blink + left poke 검출 ---
@@ -2697,27 +2760,40 @@ class Task:
                 curr_temp, target_temp = self._get_shared_temperatures()
                 if curr_temp is None:
                     curr_temp = target_temp if target_temp is not None else start_temp
-                bump = random.choice(bump_choices)
+                bump = next_bump()
                 new_target = max(temp_min, min(curr_temp + bump, temp_max))
                 rt = round(poke_t - (cw_start - self.start_time), 3)
 
                 self.peltier_queue.put(("SET_ATTENUATION_DIRECT", (0.0, temp_min, temp_max)))
                 self.peltier_queue.put(("SET_TEMP", new_target))
                 self.screen.show(state=["w"])
+                outcome_delta = bump
+                outcome_target = new_target
 
                 print(f"[TL] trial {trial}: LeftPoke, avg={curr_temp:.3f}°C + bump {bump} "
                       f"→ target {new_target:.3f}°C (RT={rt}s)")
                 dt_row = [self.mouseid, self.day, self.trainingstep, trial,
-                          poke_t, "LeftPoke", curr_temp, new_target, 'l', bump, rt]
+                          poke_t, "LeftPoke", curr_temp, new_target, 'l', bump, rt,
+                          outcome_delta, outcome_target]
                 self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
             else:
                 if not session_done:
-                    self.screen.show()  # 검은 화면 (drift 유지)
+                    self.screen.show()  # 검은 화면
                     curr_temp, target_temp = self._get_shared_temperatures()
-                    print(f"[TL] trial {trial}: NoChoice (drift continues)")
+                    if curr_temp is None:
+                        curr_temp = target_temp if target_temp is not None else start_temp
+                    drop = next_no_choice_drop()
+                    new_target = max(temp_min, min(curr_temp - drop, temp_max))
+                    self.peltier_queue.put(("SET_ATTENUATION_DIRECT", (0.0, temp_min, temp_max)))
+                    self.peltier_queue.put(("SET_TEMP", new_target))
+                    outcome_delta = -drop
+                    outcome_target = new_target
+                    print(f"[TL] trial {trial}: NoChoice, avg={curr_temp:.3f} - drop {drop} "
+                          f"-> target {new_target:.3f}")
                     dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                               time.time() - self.start_time, "NoChoice",
-                              curr_temp, target_temp, 'n', 'n', 'n']
+                              curr_temp, new_target, 'n', -drop, 'n',
+                              outcome_delta, outcome_target]
                     self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
             if session_done:
@@ -2734,7 +2810,8 @@ class Task:
             curr_temp, target_temp = self._get_shared_temperatures()
             dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                       time.time() - self.start_time, "FeedbackEnd",
-                      curr_temp, target_temp, 'l' if choice else 'n', 'n', 'n']
+                      curr_temp, target_temp, 'l' if choice else 'n', 'n', 'n',
+                      outcome_delta, outcome_target]
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
             if session_done:
@@ -2748,18 +2825,26 @@ class Task:
             curr_temp = target_temp
         dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                   time.time() - self.start_time, "SessionEnd",
-                  curr_temp, target_temp, 'n', 'n', 'n']
+                  curr_temp, target_temp, 'n', 'n', 'n', 'n', 'n']
         self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
         self.stop_event.set()
         print("=== TL Session Ended ===")
 
     def TL1(self):
-        print("=== TL1: Temperature lift (+4/5/6) ===")
-        self._run_temperature_lift(bump_choices=(4.0, 5.0, 6.0))
+        print("=== TL1: Temperature lift (+5/-5 fixed) ===")
+        self._run_temperature_lift(
+            bump_choices=(5.0,),
+            no_choice_drop_choices=(5.0,),
+        )
 
     def TL2(self):
-        print("=== TL2: Temperature lift (+2.5/3/3.5) ===")
-        self._run_temperature_lift(bump_choices=(2.5, 3.0, 3.5))
+        print("=== TL2: Temperature lift (+3/3.5/4, -1.5/-2/-2.5, 10s/20s) ===")
+        self._run_temperature_lift(
+            bump_choices=(3.0, 3.5, 4.0),
+            no_choice_drop_choices=(1.5, 2.0, 2.5),
+            choice_window=10.0,
+            feedback_window=20.0,
+        )
 
     def New_Stage2(self, start_temp=30.0, task_time=60,
                    attenuation_rate=0.07, temp_change=4.0, temp_tolerance=0.5,
@@ -3645,12 +3730,12 @@ class TRL_main_Task(Task):
         self.TRL_main()
 
 class TL1_Task(Task):
-    """TL1: left-only, choice 시 +4/5/6°C, -0.07°C/s drift, 20s/40s window."""
+    """TL1: left-only, choice 시 +5°C, no-choice 시 -5°C, 20s/40s window."""
     def task(self):
         self.TL1()
 
 class TL2_Task(Task):
-    """TL2: TL1과 동일하나 choice 시 +2.5/3/3.5°C."""
+    """TL2: left-only, choice 시 +3/3.5/4°C, no-choice 시 -1.5/-2/-2.5°C."""
     def task(self):
         self.TL2()
 

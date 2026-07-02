@@ -27,7 +27,7 @@ SER=$(udevadm info -q property -n "$PORT" | sed -n 's/^ID_SERIAL_SHORT=//p')
 echo "  VID=$VID  PID=$PID  SERIAL=${SER:-(없음)}"
 [ -n "$VID" ] && [ -n "$PID" ] || { echo "❌ VID/PID 읽기 실패"; exit 1; }
 
-echo "규칙 작성: $RULE  (VID/PID 매칭)"
+echo "규칙 작성: $RULE  (VID/PID 매칭)"`
 sudo tee "$RULE" >/dev/null <<EOF
 # 자동 생성됨 (link_arduino.sh). 감지 보드: VID=$VID PID=$PID SERIAL=${SER:-none}
 SUBSYSTEM=="tty", ATTRS{idVendor}=="$VID", ATTRS{idProduct}=="$PID", SYMLINK+="arduino", MODE="0666", ENV{ID_MM_DEVICE_IGNORE}="1"
