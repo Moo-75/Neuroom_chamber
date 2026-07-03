@@ -14,9 +14,9 @@ TL1 and TL2 use the same event order but different window durations.
 
 | Phase | Duration | Description |
 |---|---:|---|
-| Trial start | immediate | Target temperature is held. A 1.0 s solenoid-valve sound cue is generated through `reward.give(trial_start_reward)`. |
+| Trial start | immediate | Target temperature is held. A 0.1 s solenoid-valve sound cue is generated through `reward.give(trial_start_reward)`. |
 | Choice window | TL1: 20 s; TL2: 10 s | Left cue blinks. Left poke is the only valid choice. Other pokes are ignored. |
-| Feedback window | TL1: 40 s; TL2: 20 s | Pokes are ignored. The selected outcome target is maintained. |
+| Feedback window | TL1: 40 s; TL2: 20 s | White screen is shown. Pokes are ignored. The selected outcome target is maintained. |
 | Trial end | immediate | `FeedbackEnd` is logged and the next trial starts if session time remains. |
 
 Default session duration is 60 min.
@@ -36,23 +36,24 @@ Common settings:
 If the mouse makes a valid left poke:
 
 - Outcome delta is fixed at `+5.0` C.
-- New target is `current_average_temp + outcome_delta`, clamped to 10 to 40 C.
+- New target is `target_temp + outcome_delta`, clamped to 10 to 40 C.
 
 If the mouse makes no choice:
 
 - Outcome delta is fixed at `-5.0` C.
-- New target is `current_average_temp + outcome_delta`, clamped to 10 to 40 C.
+- New target is `target_temp + outcome_delta`, clamped to 10 to 40 C.
 
 ### TL2
 
 If the mouse makes a valid left poke:
 
 - Outcome delta is selected from `+3.0`, `+3.5`, `+4.0` C using 20-trial balanced random bag sampling.
-- New target is `current_average_temp + outcome_delta`, clamped to 10 to 40 C.
+- New target is `target_temp + outcome_delta`, clamped to 10 to 40 C.
 
 If the mouse makes no choice:
 
 - Outcome delta is selected from `-1.5`, `-2.0`, `-2.5` C using 20-trial balanced random bag sampling.
+- New target is `target_temp + outcome_delta`, clamped to 10 to 40 C.
 
 ## 4. Balanced Random Jitter
 
@@ -131,7 +132,7 @@ OutcomeTarget_Temp
 - Trial start sound cue
 - Valid left nose-poke sound cue
 
-Both calls use a 1.0 s duration.
+Both calls use a 0.1 s duration.
 
 ## 7. Other Exported Data
 

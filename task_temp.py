@@ -2612,7 +2612,7 @@ class Task:
                               no_choice_balance_block=20,
                               choice_window=20.0, feedback_window=40.0,
                               task_time=60, blink_period=1.0,
-                              trial_start_reward=1.0, choice_reward=1.0):
+                              trial_start_reward=0.1, choice_reward=0.1):
         """
         TL 공통 코어. Left-only, trial-based.
         - 한 trial: choice window(기본 20s) + feedback window(기본 40s).
@@ -2671,6 +2671,13 @@ class Task:
                 no_choice_drop_block_index += 1
             return no_choice_drop_bag.pop()
 
+        def outcome_base_temp(curr_temp, target_temp):
+            if target_temp is not None:
+                return target_temp
+            if curr_temp is not None:
+                return curr_temp
+            return start_temp
+
         shared_start_temp = None
         with self.dict_lock:
             shared_start_temp = self.shared_data.get("initial_target_temp")
@@ -2689,6 +2696,8 @@ class Task:
 
         self.peltier_queue.put(("SET_TEMP", start_temp))
         self.peltier_queue.put(("SET_ATTENUATION_DIRECT", (0.0, temp_min, temp_max)))
+        with self.dict_lock:
+            self.shared_data["target_temp"] = start_temp
 
         trial = 0
         start_Ex = time.time()
@@ -2761,7 +2770,8 @@ class Task:
                 if curr_temp is None:
                     curr_temp = target_temp if target_temp is not None else start_temp
                 bump = next_bump()
-                new_target = max(temp_min, min(curr_temp + bump, temp_max))
+                base_temp = outcome_base_temp(curr_temp, target_temp)
+                new_target = max(temp_min, min(base_temp + bump, temp_max))
                 rt = round(poke_t - (cw_start - self.start_time), 3)
 
                 self.peltier_queue.put(("SET_ATTENUATION_DIRECT", (0.0, temp_min, temp_max)))
@@ -2770,7 +2780,7 @@ class Task:
                 outcome_delta = bump
                 outcome_target = new_target
 
-                print(f"[TL] trial {trial}: LeftPoke, avg={curr_temp:.3f}°C + bump {bump} "
+                print(f"[TL] trial {trial}: LeftPoke, target={base_temp:.3f}°C + bump {bump} "
                       f"→ target {new_target:.3f}°C (RT={rt}s)")
                 dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                           poke_t, "LeftPoke", curr_temp, new_target, 'l', bump, rt,
@@ -2778,17 +2788,18 @@ class Task:
                 self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
             else:
                 if not session_done:
-                    self.screen.show()  # 검은 화면
+                    self.screen.show(state=["w"])  # feedback white screen
                     curr_temp, target_temp = self._get_shared_temperatures()
                     if curr_temp is None:
                         curr_temp = target_temp if target_temp is not None else start_temp
                     drop = next_no_choice_drop()
-                    new_target = max(temp_min, min(curr_temp - drop, temp_max))
+                    base_temp = outcome_base_temp(curr_temp, target_temp)
+                    new_target = max(temp_min, min(base_temp - drop, temp_max))
                     self.peltier_queue.put(("SET_ATTENUATION_DIRECT", (0.0, temp_min, temp_max)))
                     self.peltier_queue.put(("SET_TEMP", new_target))
                     outcome_delta = -drop
                     outcome_target = new_target
-                    print(f"[TL] trial {trial}: NoChoice, avg={curr_temp:.3f} - drop {drop} "
+                    print(f"[TL] trial {trial}: NoChoice, target={base_temp:.3f} - drop {drop} "
                           f"-> target {new_target:.3f}")
                     dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                               time.time() - self.start_time, "NoChoice",
