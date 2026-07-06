@@ -19,8 +19,9 @@ CAMERA_FPS = 10.0
 CAMERA_READ_RETRY_DELAY_SEC = 0.1
 CAMERA_REOPEN_AFTER_FAILURES = 10
 CAMERA_MAX_READ_FAILURES = 60
+SENSOR_POLL_WAIT_MS = 50
 
-# # maze에서 사용한 library를 다 써야하는게 아닌가? 
+# # maze?먯꽌 ?ъ슜??library瑜????⑥빞?섎뒗寃??꾨땶媛?
 # import pandas as pd
 # RPi.GPIO as GPIO
 # import os
@@ -31,10 +32,10 @@ class Task:
         with open (json_dir, "r") as config: #import data
             self.data = json.load(config)
         self.json_dir = json_dir
-        self.count_limit = self.data["trial"] 
-        self.screen = maze.Display(json_dir) 
+        self.count_limit = self.data["trial"]
+        self.screen = maze.Display(json_dir)
         self.sensor = maze.Sensor(json_dir)
-        self.reward = maze.Reward(json_dir) 
+        self.reward = maze.Reward(json_dir)
         self.FP = maze.Photometry(json_dir)
         self.file_trialdata = TrialData_file_name # file format can be decided in the task code.
         self.mouseid = mouseid #
@@ -53,8 +54,7 @@ class Task:
         self.video_height = None
         self.video_fps = CAMERA_FPS
         self.video_writer_name = None
-        self.timestamp_file = FrameTime_file_name
-        self._init_video_recording(Video_file_name, FrameTime_file_name)
+        self._init_video_recording(Video_file_name)
 
     def _camera_backend(self):
         if sys.platform.startswith("linux") and hasattr(cv2, "CAP_V4L2"):
@@ -113,7 +113,7 @@ class Task:
                 "appsrc is-live=true format=time ! "
                 f"video/x-raw,format=BGR,width={width},height={height},framerate={fps_num}/1 ! "
                 "videoconvert ! video/x-raw,format=I420 ! "
-                f"x264enc speed-preset=veryfast tune=zerolatency bitrate={bitrate_kbps} key-int-max={int(fps * 2)} ! "
+                f"x264enc speed-preset=ultrafast tune=zerolatency bitrate={bitrate_kbps} key-int-max={int(fps * 2)} ! "
                 "h264parse config-interval=-1 ! mp4mux ! "
                 f'filesink location="{self._gst_safe_path(video_file_name)}"'
             )
@@ -133,7 +133,7 @@ class Task:
         writer.release()
         return None, None
 
-    def _init_video_recording(self, video_file_name, frame_time_file_name):
+    def _init_video_recording(self, video_file_name):
         try:
             print("connecting camera")
             self.cap, self.video_width, self.video_height, self.video_fps = self._open_camera()
@@ -153,10 +153,6 @@ class Task:
                 self.cap = None
                 return
 
-            self._ensure_parent_dir(frame_time_file_name)
-            with open(frame_time_file_name, 'w', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow(['Frame', 'Timestamp'])
             print(
                 f"[Camera] recording {self.video_width}x{self.video_height} "
                 f"@ {self.video_fps:.2f} fps to MP4 via {self.video_writer_name}"
@@ -222,7 +218,7 @@ class Task:
                     curr_temp = self.shared_data["average_temp"]
                 if curr_temp is None or not math.isfinite(curr_temp):
                     curr_temp = float("nan")
-            
+
             # Get the current Unix timestamp with decimal places
             unix_timestamp = time.time() - self.start_time
             # Format the Unix timestamp as a string with decimal places
@@ -237,17 +233,12 @@ class Task:
                 print(f"[Camera] video write failed: {e}; stopping video recording only.")
                 break
 
-            # Write the timestamp and frame count to the CSV file
-            with open(self.timestamp_file, 'a', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow([frame_count, f"{unix_timestamp:.3f}"])
-            
             frame_count += 1
     def task(self):
         pass
 
     def _temp_status_monitor(self, stop_event, interval_sec=30.0):
-        """터미널 한 줄(\\r)에 현재/목표 온도를 주기적으로 갱신."""
+        """?곕?????以?\\r)???꾩옱/紐⑺몴 ?⑤룄瑜?二쇨린?곸쑝濡?媛깆떊."""
         pad = 80
         while True:
             curr_temp, target_temp = self._get_shared_temperatures()
@@ -256,7 +247,7 @@ class Task:
             target_s = f"{target_temp:.2f}" if target_temp is not None else "n/a"
             msg = (
                 f"[TEMP] t={elapsed_min:.1f}min  "
-                f"avg={curr_s}°C  target={target_s}°C"
+                f"avg={curr_s}째C  target={target_s}째C"
             )
             sys.stdout.write("\r" + msg.ljust(pad))
             sys.stdout.flush()
@@ -385,7 +376,7 @@ class Task:
         if target_temp >= poke_max:
             return target_temp
         return min(target_temp + temp_change, poke_max)
-    
+
     # LED + Reward(amount)
     def LED_Reward(self, amount, FP_on=False):
         self.reward.light(True)
@@ -412,7 +403,7 @@ class Task:
             RT_time = round(time.time(), 3)
             fp_reward_off = self.FP.FP3_off(on=FP_on)
         self.reward.light(False)
-            
+
         return RG_time, RT_time, fp_reward_on, fp_reward_off
 
     def Wrong_LED(self, screen=True):
@@ -427,7 +418,7 @@ class Task:
                 break
         self.reward.wrong(False)
         wrongLED_off = round(time.time(), 3)
-        return wrongLED_on, wrongLED_off    
+        return wrongLED_on, wrongLED_off
 
     def sensor2lmr_init(self, choice_tuple, cue_time, timeout=False, FP_on=True):
         current_sensor = self.sensor.get()
@@ -464,7 +455,7 @@ class Task:
                         choice_tuple[3] = 0
                         print("r out")
                         break
-                
+
             return choice_tuple, poke_pos, poke_time
         else:
             return choice_tuple,
@@ -489,7 +480,7 @@ class Task:
         # if init_delay:
         #     while True:
         #         if time.time() - init_off >= self.delay:
-        #             break        
+        #             break
 
         return init_on, init_off
 
@@ -515,7 +506,7 @@ class Task:
                         break
             if rp_flag == 1:
                 break
-           
+
         self.screen.show()
 
         while True:
@@ -583,7 +574,7 @@ class Task:
                             choice_tuple[3] = 0
                             print("r out")
                             break
-                   
+
                 return choice_tuple, poke_pos, poke_time
             else:
                 return choice_tuple,
@@ -600,19 +591,19 @@ class Task:
 
         if not os.path.isdir(directory):
             os.makedirs(directory)
-        
+
         if not os.path.exists(filename):
             with open(filename, "w") as outfile:
                 writer = csv.writer(outfile)
                 writer.writerow(col)
-        
+
         with open(filename, "a") as outfile:
             writer = csv.writer(outfile)
             writer.writerow(row)
 
     def Temperature_test(self, stay_time_start=5, task_time=180, stay_time_end=0, start_temp = 10, max_temp = 40, min_temp = 10, d_temp = 4, ITI_duration = 30, FP_on=True,
                          poke_temp = 4.0, optimal_temp = 30.0, hold_seconds=60, reach_tolerance=0.5):
-        
+
         file_name_td = self.file_trialdata+"_trial-wise.csv"
         directory = os.path.dirname(file_name_td)
         self.peltier_queue.put(("SET_ATTENUATION", 0))
@@ -721,10 +712,10 @@ class Task:
 
         finish_session("SessionEnd")
         return
-    
+
     def Cold_to_hot_block(self, stay_time_start=5, task_time=60, stay_time_end=0, start_temp = 10, max_temp = 25, min_temp = 10, d_temp = 5, ITI_duration = 30, FP_on=True,
                          poke_temp = 4.0, optimal_temp = 30.0):
-        
+
         file_name_td = self.file_trialdata+"_trial-wise.csv"
         directory = os.path.dirname(file_name_td)
 
@@ -737,9 +728,9 @@ class Task:
         # attenuation_factor = - 0.039
         attenuation_factor = 0
         self.peltier_queue.put(("SET_ATTENUATION", attenuation_factor))
-        
+
         col_name_td = ['mouseID', 'Day','Task', 'Trial', "Time", "Event", "Poke_pos", "Photometry_signal"]
-        
+
         choice_tuple=[0,0,0,0]
         i = 0
         target_temp = start_temp
@@ -753,9 +744,9 @@ class Task:
         while True:
             i += 1
             # Update current_temp (not possible yet)
-            
+
             # self.screen.display_temp_both()
-            
+
             if curr_temp is not None \
                 and curr_temp <= optimal_temp - 0.5 or curr_temp > optimal_temp + 0.5:
                 self.screen.display_temp_cue("hot")
@@ -765,29 +756,29 @@ class Task:
                 self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
             choice_tuple=[0,0,0,0]
-            
+
             while True:
                 poke_result = self.sensor2lmr(choice_tuple, cue_on, loop=False)
-                choice_tuple = poke_result[0]                    
-                
+                choice_tuple = poke_result[0]
+
                 if len(poke_result) == 3:
                     poke_pos = poke_result[1]
                     poke_time = poke_result[2]
-                    
+
                     if poke_pos == "l" or poke_pos == "r":
-                        dt_row = [self.mouseid, self.day, self.trainingstep, i, poke_time, "PokeTime", poke_pos,'n'] 
+                        dt_row = [self.mouseid, self.day, self.trainingstep, i, poke_time, "PokeTime", poke_pos,'n']
                         self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
                         break
-                
+
                 # Time limit
                 if (time.time() - self.start_time) >= task_time*60:
-                    dt_row = [self.mouseid, self.day, self.trainingstep, i, time.time() - self.start_time, "End", 'n','n'] 
+                    dt_row = [self.mouseid, self.day, self.trainingstep, i, time.time() - self.start_time, "End", 'n','n']
                     self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
                     print("Session time reached maximum. \n Terminating task")
                     self.screen.show(state = ["g"]) #turn gray
                     poke_pos = 'n'
                     break
-                
+
             if poke_pos == 'l':
                 print("chose H, TempUP")
                 fp_poke_on = self.FP.FP1_on(on=FP_on)
@@ -826,9 +817,9 @@ class Task:
             # if poke_pos == 'r':
             #     print("chose C")
             #     fp_poke_on = self.FP.FP1_on(on=FP_on)
-            #     fp_poke_off = self.FP.FP1_off(on=FP_on) 
+            #     fp_poke_off = self.FP.FP1_off(on=FP_on)
             #     # self.screen.display_temp_cue("cold")
-            #     dt_row = [self.mouseid, self.day, self.trainingstep, i, time.time() - self.start_time, "TempDown", poke_pos,'n'] 
+            #     dt_row = [self.mouseid, self.day, self.trainingstep, i, time.time() - self.start_time, "TempDown", poke_pos,'n']
             #     self.peltier_queue.put(("TEMP_UPDOWN", poke_temp))
 
             # Time limit
@@ -839,10 +830,10 @@ class Task:
                 break
 
         return
-    
+
     def Hot_to_cold_block(self, stay_time_start=5, task_time=60, stay_time_end=0, start_temp = 40, max_temp = 25, min_temp = 10, d_temp = 5, ITI_duration = 30, FP_on=True,
                          poke_temp = - 4.0, optimal_temp = 20.0):
-        
+
         file_name_td = self.file_trialdata+"_trial-wise.csv"
         directory = os.path.dirname(file_name_td)
 
@@ -855,9 +846,9 @@ class Task:
         # attenuation_factor = 0.039
         attenuation_factor = 0
         self.peltier_queue.put(("SET_ATTENUATION", attenuation_factor))
-        
+
         col_name_td = ['mouseID', 'Day','Task', 'Trial', "Time", "Event", "Poke_pos", "Photometry_signal"]
-        
+
         choice_tuple=[0,0,0,0]
         i = 0
         target_temp = start_temp
@@ -870,7 +861,7 @@ class Task:
         while True:
             i += 1
             # Update current_temp (not possible yet)
-            
+
             # self.screen.display_temp_both()
             if curr_temp is not None \
                 and curr_temp <= optimal_temp - 0.5 or curr_temp > optimal_temp + 0.5:
@@ -880,29 +871,29 @@ class Task:
                 self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
             choice_tuple=[0,0,0,0]
-            
+
             while True:
                 poke_result = self.sensor2lmr(choice_tuple, cue_on, loop=False)
-                choice_tuple = poke_result[0]                    
-                
+                choice_tuple = poke_result[0]
+
                 if len(poke_result) == 3:
                     poke_pos = poke_result[1]
                     poke_time = poke_result[2]
-                    
+
                     if poke_pos == "l" or poke_pos == "r":
-                        dt_row = [self.mouseid, self.day, self.trainingstep, i, poke_time, "PokeTime", poke_pos,'n'] 
+                        dt_row = [self.mouseid, self.day, self.trainingstep, i, poke_time, "PokeTime", poke_pos,'n']
                         self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
                         break
-                
+
                 # Time limit
                 if (time.time() - self.start_time) >= task_time*60:
-                    dt_row = [self.mouseid, self.day, self.trainingstep, i, time.time() - self.start_time, "End", 'n','n'] 
+                    dt_row = [self.mouseid, self.day, self.trainingstep, i, time.time() - self.start_time, "End", 'n','n']
                     self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
                     print("Session time reached maximum. \n Terminating task")
                     self.screen.show(state = ["g"]) #turn gray
                     poke_pos = 'n'
                     break
-                
+
             if poke_pos == 'r':
                 print("chose C, TempDown")
                 fp_poke_on = self.FP.FP1_on(on=FP_on)
@@ -946,10 +937,10 @@ class Task:
                 break
 
         return
-    
+
     def Preference_test(self, stay_time_start=5, task_time=5, stay_time_end=0, start_temp = 40, max_temp = 25, min_temp = 10, d_temp = 5, ITI_duration = 30, FP_on=True,
                          poke_temp = - 4.0, optimal_temp = 25.0):
-        
+
         file_name_td = self.file_trialdata+"_trial-wise.csv"
         directory = os.path.dirname(file_name_td)
 
@@ -960,9 +951,9 @@ class Task:
         # attenuation_factor = 0.039
         attenuation_factor = 0
         self.peltier_queue.put(("SET_ATTENUATION", attenuation_factor))
-        
+
         col_name_td = ['mouseID', 'Day','Task', 'Trial', "Time", "Event", "Poke_pos", "Photometry_signal"]
-        
+
         choice_tuple=[0,0,0,0]
         i = 0
         target_temp = start_temp
@@ -975,7 +966,7 @@ class Task:
         while True:
             i += 1
             # Update current_temp (not possible yet)
-            
+
             # self.screen.display_temp_both()
             if curr_temp is not None \
                 and curr_temp <= optimal_temp - 0.5 or curr_temp > optimal_temp + 0.5:
@@ -1000,27 +991,27 @@ class Task:
                 if len(poke_result) == 3:
                     poke_pos = poke_result[1]
                     poke_time = poke_result[2]
-                    
+
                     if poke_pos == "n": continue
-                
+
                     if poke_pos == "l" or poke_pos == "r":
-                        dt_row = [self.mouseid, self.day, self.trainingstep, i, poke_time, "PokeTime", poke_pos,'n'] 
+                        dt_row = [self.mouseid, self.day, self.trainingstep, i, poke_time, "PokeTime", poke_pos,'n']
                         self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
-                    
+
                     poke_counter[poke_pos] += 1
                     if poke_counter[poke_pos] > 1:
                         break
                     print(poke_counter)
-                
+
                 # Time limit
                 if (time.time() - self.start_time) >= 5 * 60:
-                    dt_row = [self.mouseid, self.day, self.trainingstep, i, time.time() - self.start_time, "End", 'n','n'] 
+                    dt_row = [self.mouseid, self.day, self.trainingstep, i, time.time() - self.start_time, "End", 'n','n']
                     self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
                     print("Session time reached maximum. \n Terminating task")
                     self.screen.show(state = ["g"]) #turn gray
                     poke_pos = 'n'
                     break
-            
+
             if poke_pos == 'l':
                 print("chose H, TempUP")
                 fp_poke_on = self.FP.FP1_on(on=FP_on)
@@ -1105,9 +1096,9 @@ class Task:
         # attenuation_factor = 0.039
         attenuation_factor = 0
         self.peltier_queue.put(("SET_ATTENUATION", attenuation_factor))
-        
+
         col_name_td = ['mouseID', 'Day','Task', 'Trial', "Time", "Event", "Poke_pos", "Photometry_signal"]
-        
+
         choice_tuple=[0,0,0,0]
         i = 0
         target_temp = start_temp
@@ -1120,7 +1111,7 @@ class Task:
         while True:
             i += 1
             # Update current_temp (not possible yet)
-            
+
             self.screen.display_temp_both()
             # self.screen.display_temp_cue("cold")
             cue_on = time.time() - self.start_time
@@ -1134,29 +1125,29 @@ class Task:
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
             choice_tuple=[0,0,0,0]
-            
+
             while True:
                 poke_result = self.sensor2lmr(choice_tuple, cue_on, loop=False)
-                choice_tuple = poke_result[0]                    
-                
+                choice_tuple = poke_result[0]
+
                 if len(poke_result) == 3:
                     poke_pos = poke_result[1]
                     poke_time = poke_result[2]
-                    
+
                     if poke_pos == "l" or poke_pos == "r":
-                        dt_row = [self.mouseid, self.day, self.trainingstep, i, poke_time, "PokeTime", poke_pos,'n'] 
+                        dt_row = [self.mouseid, self.day, self.trainingstep, i, poke_time, "PokeTime", poke_pos,'n']
                         self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
                         break
-                
+
                 # Time limit
                 if (time.time() - self.start_time) >= task_time*60:
-                    dt_row = [self.mouseid, self.day, self.trainingstep, i, time.time() - self.start_time, "End", 'n','n'] 
+                    dt_row = [self.mouseid, self.day, self.trainingstep, i, time.time() - self.start_time, "End", 'n','n']
                     self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
                     print("Session time reached maximum. \n Terminating task")
                     self.screen.show(state = ["g"]) #turn gray
                     poke_pos = 'n'
                     break
-            
+
             if poke_pos == 'l':
                 print("chose H, TempUP")
                 fp_poke_on = self.FP.FP1_on(on=FP_on)
@@ -1196,7 +1187,7 @@ class Task:
                         break
 
                     pygame.time.wait(200)
-                
+
             if poke_pos == 'r':
                 print("chose C, TempDown")
                 fp_poke_on = self.FP.FP1_on(on=FP_on)
@@ -1245,7 +1236,7 @@ class Task:
                 break
 
         return
-    
+
     def POA_task(self, stay_time_start=5, task_time=60, stay_time_end=0, start_temp = 30, max_temp = 40, min_temp = 10, d_temp = 5, ITI_duration = 30, FP_on=True,
                          poke_temp = - 5.0, optimal_temp = 30.0):
         file_name_td = self.file_trialdata+"_trial-wise.csv"
@@ -1253,9 +1244,9 @@ class Task:
         # attenuation_factor = 0.039
         attenuation_factor = 0
         self.peltier_queue.put(("SET_ATTENUATION", attenuation_factor))
-        
+
         col_name_td = ['mouseID', 'Day','Task', 'Trial', "Time", "Event", "Poke_pos", "Photometry_signal"]
-        
+
         choice_tuple=[0,0,0,0]
         i = 0
         target_temp = start_temp
@@ -1265,7 +1256,7 @@ class Task:
         poke_pos = 'n'
 
         start_time = time.time()
-        
+
         # Define phase parameters (duration in seconds, target temperature, phase name)
         phases = [
             ("Baseline1", self.data["poa_task_vars"]["baseline1_duration"] * 60, self.data["poa_task_vars"]["baseline1_temperature"]),
@@ -1311,31 +1302,31 @@ class Task:
         self.stop_event.set()
 
         return
-    
-    
+
+
     # ============================================================
     # Temperature Training Protocol - Stage 1, 2, 3
     # ============================================================
-    
+
     def Training_Stage1(self, start_temp=23.0, task_time=30, max_trials=100,
                         temp_change=3.0, choice_window=30, temp_hold_time=10, iti_duration=10,
                         optimal_min=27.0, optimal_max=33.0, choice_min=23.0, choice_max=37.0,
                         optimal_threshold=30.0, post_reach_duration=10):
         """
         Stage 1: Poke-Temperature Association
-        - 목표: Nose poke가 온도 변화를 유발한다는 것을 학습
+        - 紐⑺몴: Nose poke媛 ?⑤룄 蹂?붾? ?좊컻?쒕떎??寃껋쓣 ?숈뒿
         - Attenuation: OFF
-        - State: 없음
-        - 종료 조건: Optimal 온도(30도) 도달 후 10분 경과 시 종료
+        - State: ?놁쓬
+        - 醫낅즺 議곌굔: Optimal ?⑤룄(30?? ?꾨떖 ??10遺?寃쎄낵 ??醫낅즺
         """
         print("=== Training Stage 1: Poke-Temperature Association ===")
-        
+
         file_name_td = self.file_trialdata + "_trial-wise.csv"
         directory = os.path.dirname(file_name_td)
-        col_name_td = ['mouseID', 'Day', 'Task', 'Trial', 'Time', 'Event', 
+        col_name_td = ['mouseID', 'Day', 'Task', 'Trial', 'Time', 'Event',
                        'Current_Temp', 'Target_Temp', 'Poke_pos', 'Response_Time']
-        
-        
+
+
         # Load parameters from JSON if available
         if "TS_params" in self.data and "Stage1" in self.data["TS_params"]:
             params = self.data["TS_params"]["Stage1"]
@@ -1344,19 +1335,19 @@ class Task:
             temp_hold_time = params.get("temp_hold_time", temp_hold_time)
             print(f"Loaded Stage 1 params from JSON: task_time={task_time}, choice_window={choice_window}, temp_hold_time={temp_hold_time}")
 
-        # 초기 설정
+        # 珥덇린 ?ㅼ젙
         target_temp = start_temp
         self.peltier_queue.put(("SET_TEMP", target_temp))
         self.peltier_queue.put(("SET_ATTENUATION_DIRECT", 0))  # Attenuation OFF
-        
+
         optimal_reached_time = None
         is_start_cold = start_temp < optimal_threshold
-        
+
         trial = 0
         start_Ex = time.time()
-        
-        # 초기 온도 도달 대기
-        print(f"Waiting for initial temperature: {target_temp}°C")
+
+        # 珥덇린 ?⑤룄 ?꾨떖 ?湲?
+        print(f"Waiting for initial temperature: {target_temp}째C")
         while True:
             current_state, attenuation_sign, state_switched, _ = self._maybe_switch_ns_attenuation_state(
                 start_Ex, current_state, attenuation_sign, state_switch_after_sec,
@@ -1369,166 +1360,166 @@ class Task:
                 print(f"Initial temperature did not reach {target_temp} C. Last temperature: {curr_temp}")
                 return
             pygame.time.wait(500)
-        
-        dt_row = [self.mouseid, self.day, self.trainingstep, trial, 
+
+        dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                   time.time() - self.start_time, "SessionStart", curr_temp, target_temp, 'n', 0]
         self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
-        
-        # Trial 루프
+
+        # Trial 猷⑦봽
         while trial < max_trials and (time.time() - start_Ex) < task_time * 60:
             trial += 1
             print(f"\n--- Trial {trial} ---")
-            
+
             curr_temp, target_temp = self._get_shared_temperatures()
             if target_temp is None:
                 target_temp = start_temp
             if curr_temp is None:
                 curr_temp = target_temp
-            
-            # Optimal 도달 체크 및 종료 타이머 확인
+
+            # Optimal ?꾨떖 泥댄겕 諛?醫낅즺 ??대㉧ ?뺤씤
             if optimal_reached_time is None:
                 if is_start_cold and curr_temp >= optimal_threshold:
                     optimal_reached_time = time.time()
-                    print(f"!!! Optimal temperature ({optimal_threshold}°C) reached! Session will end in {post_reach_duration} min. !!!")
+                    print(f"!!! Optimal temperature ({optimal_threshold}째C) reached! Session will end in {post_reach_duration} min. !!!")
                 elif not is_start_cold and curr_temp <= optimal_threshold:
                     optimal_reached_time = time.time()
-                    print(f"!!! Optimal temperature ({optimal_threshold}°C) reached! Session will end in {post_reach_duration} min. !!!")
-            
+                    print(f"!!! Optimal temperature ({optimal_threshold}째C) reached! Session will end in {post_reach_duration} min. !!!")
+
             if optimal_reached_time is not None:
                 passed_time = time.time() - optimal_reached_time
                 print(f"Time since optimal reached: {passed_time/60:.1f} min / {post_reach_duration} min")
                 if passed_time > (post_reach_duration * 60):
                     print(f"--- {post_reach_duration} minutes passed after reaching optimal. Ending session. ---")
                     break
-            
-            # 1. Trial Cue (소리만, wait 없음)
-            self.reward.give(0.1)  # 밸브 소리 cue
-            self.reward.give(0.1)  # 밸브 소리 cue
+
+            # 1. Trial Cue (?뚮━留? wait ?놁쓬)
+            self.reward.give(0.1)  # 諛몃툕 ?뚮━ cue
+            self.reward.give(0.1)  # 諛몃툕 ?뚮━ cue
             cue_time = time.time() - self.start_time
             dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                       cue_time, "TrialCue", curr_temp, target_temp, 'n', 0]
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
-            
-            # 2. Choice Window - 양쪽 cue 표시
+
+            # 2. Choice Window - ?묒そ cue ?쒖떆
             self.screen.display_temp_both()
             choice_start = time.time()
             choice_tuple = [0, 0, 0, 0]
             poke_pos = 'n'
             poke_time = 0
-            
+
             while (time.time() - choice_start) < choice_window:
                 poke_result = self.sensor2lmr(choice_tuple, choice_start, loop=False)
                 choice_tuple = poke_result[0]
-                
+
                 if len(poke_result) == 3:
                     poke_pos = poke_result[1]
                     poke_time = poke_result[2]
                     response_time = time.time() - choice_start
                     break
-                    
-                pygame.time.wait(5)
-            
-            # 3. Choice 처리 + Outcome Phase
+
+                pygame.time.wait(SENSOR_POLL_WAIT_MS)
+
+            # 3. Choice 泥섎━ + Outcome Phase
             if poke_pos == 'l':  # Left = Hot
                 # Choice: LEFT (Hot)
-                print(f"Choice: LEFT (Hot) +{temp_change}°C")
+                print(f"Choice: LEFT (Hot) +{temp_change}째C")
                 if target_temp >= choice_max:
                     new_target = target_temp
                 else:
                     new_target = min(target_temp + temp_change, choice_max)
                 self.peltier_queue.put(("SET_TEMP", new_target))
-                
+
                 # Valid Choice Sound Cue
                 if new_target != target_temp:
                     self.reward.give(0.1)
-                
-                # Outcome: 온도 상승 방향 표시
+
+                # Outcome: ?⑤룄 ?곸듅 諛⑺뼢 ?쒖떆
                 self.screen.show(state=["warm"])
-                
+
                 dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                           time.time() - self.start_time, "Choice_L_Hot", curr_temp, new_target, 'l', response_time]
                 self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
-                
-                # 온도 변화 시간
+
+                # ?⑤룄 蹂???쒓컙
                 pygame.time.wait(int(temp_hold_time * 1000))
-                
+
             elif poke_pos == 'r':  # Right = Cool
                 # Choice: RIGHT (Cool)
-                print(f"Choice: RIGHT (Cool) -{temp_change}°C")
+                print(f"Choice: RIGHT (Cool) -{temp_change}째C")
                 if target_temp <= choice_min:
                     new_target = target_temp
                 else:
                     new_target = max(target_temp - temp_change, choice_min)
                 self.peltier_queue.put(("SET_TEMP", new_target))
-                
+
                 # Valid Choice Sound Cue
                 if new_target != target_temp:
                     self.reward.give(0.1)
-                
-                # Outcome: 온도 하강 방향 표시
+
+                # Outcome: ?⑤룄 ?섍컯 諛⑺뼢 ?쒖떆
                 self.screen.show(state=["cool"])
-                
+
                 dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                           time.time() - self.start_time, "Choice_R_Cool", curr_temp, new_target, 'r', response_time]
                 self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
-                
-                # 온도 변화 시간
+
+                # ?⑤룄 蹂???쒓컙
                 pygame.time.wait(int(temp_hold_time * 1000))
-                
+
             else:  # No choice
                 print("No Choice - Temperature maintained")
-                
-                # Outcome: 화면 OFF (no choice feedback)
+
+                # Outcome: ?붾㈃ OFF (no choice feedback)
                 self.screen.show()
-                
+
                 dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                           time.time() - self.start_time, "NoChoice", curr_temp, target_temp, 'n', 0]
                 self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
-                
-                # 온도 유지 시간
+
+                # ?⑤룄 ?좎? ?쒓컙
                 pygame.time.wait(int(temp_hold_time * 1000))
-            
-            # 4. ITI - 화면 OFF
+
+            # 4. ITI - ?붾㈃ OFF
             self.screen.show()
             pygame.time.wait(int(iti_duration * 1000))
-            
+
             with self.dict_lock:
                 curr_temp = self.shared_data["average_temp"]
-            
-            # Optimal 도달 체크 (여기서도 한 번 더 로그 찍어줌)
+
+            # Optimal ?꾨떖 泥댄겕 (?ш린?쒕룄 ??踰???濡쒓렇 李띿뼱以?
             if optimal_min <= curr_temp <= optimal_max:
-                print(f"Current temp {curr_temp:.1f}°C is in optimal range!")
-        
-        # 세션 종료
+                print(f"Current temp {curr_temp:.1f}째C is in optimal range!")
+
+        # ?몄뀡 醫낅즺
         dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                   time.time() - self.start_time, "SessionEnd", curr_temp, target_temp, 'n', 0]
         self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
-        
+
         print(f"\n=== Stage 1 Complete: {trial} trials ===")
         self.screen.show(state=["g"])
         self.stop_event.set()
         return
-    
-    
+
+
     def Training_Stage2(self, start_temp=25.0, task_time=35, max_trials=100,
                         temp_change=3.0, choice_window=30, temp_hold_time=10, iti_duration=0,
                         attenuation_rate=0.02, optimal_min=27.0, optimal_max=33.0,
                         choice_min=10.0, choice_max=40.0, state_change_prob=0.7):
         """
         Stage 2: Attenuation + State Introduction
-        - 목표: Attenuation과 State 개념 학습
-        - Attenuation: ON (0.02°C/초)
-        - State: 있음 (화면 cue 제공)
-        - Attenuation은 no choice 발생 시점부터 다음 choice까지 지속 적용
+        - 紐⑺몴: Attenuation怨?State 媛쒕뀗 ?숈뒿
+        - Attenuation: ON (0.02째C/珥?
+        - State: ?덉쓬 (?붾㈃ cue ?쒓났)
+        - Attenuation? no choice 諛쒖깮 ?쒖젏遺???ㅼ쓬 choice源뚯? 吏???곸슜
         """
         print("=== Training Stage 2: Attenuation + State ===")
-        
+
         file_name_td = self.file_trialdata + "_trial-wise.csv"
         directory = os.path.dirname(file_name_td)
         col_name_td = ['mouseID', 'Day', 'Task', 'Trial', 'Time', 'Event',
                        'Current_Temp', 'Target_Temp', 'Poke_pos', 'Response_Time', 'State', 'Attenuation_Active']
-        
-        
+
+
         # Load parameters from JSON if available
         if "TS_params" in self.data and "Stage2" in self.data["TS_params"]:
             params = self.data["TS_params"]["Stage2"]
@@ -1537,12 +1528,12 @@ class Task:
             temp_hold_time = params.get("temp_hold_time", temp_hold_time)
             print(f"Loaded Stage 2 params from JSON: task_time={task_time}, choice_window={choice_window}, temp_hold_time={temp_hold_time}")
 
-        # 초기 설정
+        # 珥덇린 ?ㅼ젙
         target_temp = start_temp
         self.peltier_queue.put(("SET_TEMP", target_temp))
-        self.peltier_queue.put(("SET_ATTENUATION_DIRECT", 0))  # 초기에는 attenuation OFF
-        
-        # State: 'hot' = 온도 상승 방향, 'cold' = 온도 하강 방향
+        self.peltier_queue.put(("SET_ATTENUATION_DIRECT", 0))  # 珥덇린?먮뒗 attenuation OFF
+
+        # State: 'hot' = ?⑤룄 ?곸듅 諛⑺뼢, 'cold' = ?⑤룄 ?섍컯 諛⑺뼢
         # 2026-02-10 Modify: Start state based on start_temp
         if target_temp < optimal_min:
             current_state = 'cold'
@@ -1550,197 +1541,197 @@ class Task:
             current_state = 'hot'
         else:
             current_state = random.choice(['hot', 'cold'])
-        attenuation_active = False  # no choice 발생 시 True, choice 발생 시 False
-        
+        attenuation_active = False  # no choice 諛쒖깮 ??True, choice 諛쒖깮 ??False
+
         trial = 0
         start_Ex = time.time()
-        
-        # 초기 온도 도달 대기
-        print(f"Waiting for initial temperature: {target_temp}°C")
+
+        # 珥덇린 ?⑤룄 ?꾨떖 ?湲?
+        print(f"Waiting for initial temperature: {target_temp}째C")
         reached_target, curr_temp = self._wait_for_target_temperature(
             target_temp, tolerance=1.0, timeout_sec=300, poll_ms=500
         )
         if not reached_target:
             print(f"Initial temperature did not reach {target_temp} C. Last temperature: {curr_temp}")
             return
-        
-        # State cue 표시 (Stage 2에서는 세션 시작 시 State 표시)
+
+        # State cue ?쒖떆 (Stage 2?먯꽌???몄뀡 ?쒖옉 ??State ?쒖떆)
         self.screen.display_temp_cue(current_state)
         print(f"Initial State: {current_state}")
-        
-        # was_outside_optimal 초기화 (실제 온도 기반)
+
+        # was_outside_optimal 珥덇린??(?ㅼ젣 ?⑤룄 湲곕컲)
         was_outside_optimal = curr_temp < optimal_min or curr_temp > optimal_max
-        
+
         dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                   time.time() - self.start_time, "SessionStart", curr_temp, target_temp, 'n', 0, current_state, attenuation_active]
         self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
-        
-        # Trial 루프
+
+        # Trial 猷⑦봽
         while trial < max_trials and (time.time() - start_Ex) < task_time * 60:
             trial += 1
             print(f"\n--- Trial {trial} (State: {current_state}, Attenuation: {attenuation_active}) ---")
-            
+
             curr_temp, target_temp = self._get_shared_temperatures()
             if target_temp is None:
                 target_temp = start_temp
             if curr_temp is None:
                 curr_temp = target_temp
-            
-            # Optimal 밖에 있는지 체크 (다음 trial을 위해 업데이트는 trial 끝에서 수행)
-            
-            # 1. Trial Cue (소리만, wait 없음)
+
+            # Optimal 諛뽰뿉 ?덈뒗吏 泥댄겕 (?ㅼ쓬 trial???꾪빐 ?낅뜲?댄듃??trial ?앹뿉???섑뻾)
+
+            # 1. Trial Cue (?뚮━留? wait ?놁쓬)
             self.reward.give(0.1)
             self.reward.give(0.1)
-            
+
             cue_time = time.time() - self.start_time
             dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                       cue_time, "TrialCue", curr_temp, target_temp, 'n', 0, current_state, attenuation_active]
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
-            
-            # 2. Choice Window - 양쪽 cue 표시
+
+            # 2. Choice Window - ?묒そ cue ?쒖떆
             self.screen.display_temp_both()
             choice_start = time.time()
             choice_tuple = [0, 0, 0, 0]
             poke_pos = 'n'
             response_time = 0
-            
+
             while (time.time() - choice_start) < choice_window:
                 poke_result = self.sensor2lmr(choice_tuple, choice_start, loop=False)
                 choice_tuple = poke_result[0]
-                
+
                 if len(poke_result) == 3:
                     poke_pos = poke_result[1]
                     response_time = time.time() - choice_start
                     break
-                    
-                pygame.time.wait(5)
+
+                pygame.time.wait(SENSOR_POLL_WAIT_MS)
             with self.dict_lock:
                 prev_temp = self.shared_data["target_temp"]
 
-            # 3. Choice 처리 + Outcome Phase
+            # 3. Choice 泥섎━ + Outcome Phase
             if poke_pos == 'l':  # Left = Hot
                 # Choice: LEFT (Hot)
-                print(f"Choice: LEFT (Hot) +{temp_change}°C")
+                print(f"Choice: LEFT (Hot) +{temp_change}째C")
                 if target_temp >= choice_max:
                     new_target = target_temp
                 else:
                     new_target = min(target_temp + temp_change, choice_max)
                 self.peltier_queue.put(("SET_TEMP", new_target))
-                
+
                 # Valid Choice Sound Cue
                 if new_target != target_temp:
                     self.reward.give(0.1)
-                
-                # Choice 발생 → Attenuation OFF
+
+                # Choice 諛쒖깮 ??Attenuation OFF
                 attenuation_active = False
                 self.peltier_queue.put(("SET_ATTENUATION_DIRECT", 0))
-                
-                # Outcome: 온도 상승 방향 표시
+
+                # Outcome: ?⑤룄 ?곸듅 諛⑺뼢 ?쒖떆
                 self.screen.show(state=["warm"])
-                
+
                 dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                           time.time() - self.start_time, "Choice_L_Hot", curr_temp, new_target, 'l', response_time, current_state, attenuation_active]
                 self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
-                
-                # State 전환 체크: optimal 밖 → optimal 안으로 진입
+
+                # State ?꾪솚 泥댄겕: optimal 諛???optimal ?덉쑝濡?吏꾩엯
                 if was_outside_optimal and optimal_min <= new_target <= optimal_max:
                     if random.random() < state_change_prob:
                         current_state = 'cold' if prev_temp > optimal_max else 'hot'
                     else:
                         current_state = random.choice(['hot', 'cold'])
                     print(f"State changed to: {current_state}")
-                
+
                 pygame.time.wait(int(temp_hold_time * 1000))
-                
+
             elif poke_pos == 'r':  # Right = Cool
                 # Choice: RIGHT (Cool)
-                print(f"Choice: RIGHT (Cool) -{temp_change}°C")
+                print(f"Choice: RIGHT (Cool) -{temp_change}째C")
                 if target_temp <= choice_min:
                     new_target = target_temp
                 else:
                     new_target = max(target_temp - temp_change, choice_min)
                 self.peltier_queue.put(("SET_TEMP", new_target))
-                
+
                 # Valid Choice Sound Cue
                 if new_target != target_temp:
                     self.reward.give(0.1)
-                
-                # Choice 발생 → Attenuation OFF
+
+                # Choice 諛쒖깮 ??Attenuation OFF
                 attenuation_active = False
                 self.peltier_queue.put(("SET_ATTENUATION_DIRECT", 0))
-                
-                # Outcome: 온도 하강 방향 표시
+
+                # Outcome: ?⑤룄 ?섍컯 諛⑺뼢 ?쒖떆
                 self.screen.show(state=["cool"])
-                
+
                 dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                           time.time() - self.start_time, "Choice_R_Cool", curr_temp, new_target, 'r', response_time, current_state, attenuation_active]
                 self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
-                
-                # State 전환 체크
+
+                # State ?꾪솚 泥댄겕
                 if was_outside_optimal and optimal_min <= new_target <= optimal_max:
                     if random.random() < state_change_prob:
                         current_state = 'hot' if prev_temp < optimal_min else 'cold'
                     else:
                         current_state = random.choice(['hot', 'cold'])
                     print(f"State changed to: {current_state}")
-                
+
                 pygame.time.wait(int(temp_hold_time * 1000))
-                
+
             else:  # No choice
                 print("No Choice - Attenuation activated")
-                
-                # No choice → Attenuation ON
+
+                # No choice ??Attenuation ON
                 attenuation_active = True
                 attenuation_direction = attenuation_rate if current_state == 'hot' else -attenuation_rate
                 self.peltier_queue.put(("SET_ATTENUATION_DIRECT", attenuation_direction))
-                
-                # Outcome: Attenuation 방향 표시
+
+                # Outcome: Attenuation 諛⑺뼢 ?쒖떆
                 self.screen.show()
-                
+
                 dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                           time.time() - self.start_time, "NoChoice", curr_temp, target_temp, 'n', 0, current_state, attenuation_active]
                 self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
-                
+
                 pygame.time.wait(int(temp_hold_time * 1000))
-            
-            # 4. ITI - 화면 OFF (Attenuation은 계속 유지)
+
+            # 4. ITI - ?붾㈃ OFF (Attenuation? 怨꾩냽 ?좎?)
             self.screen.show()
             pygame.time.wait(int(iti_duration * 1000))
-            
-            # optimal 밖 상태 업데이트
+
+            # optimal 諛??곹깭 ?낅뜲?댄듃
             with self.dict_lock:
                 curr_temp = self.shared_data["average_temp"]
             was_outside_optimal = curr_temp < optimal_min or curr_temp > optimal_max
-        
-        # 세션 종료
+
+        # ?몄뀡 醫낅즺
         dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                   time.time() - self.start_time, "SessionEnd", curr_temp, target_temp, 'n', 0, current_state, attenuation_active]
         self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
-        
+
         print(f"\n=== Stage 2 Complete: {trial} trials ===")
         self.screen.show(state=["g"])
         self.stop_event.set()
         return
-    
-    
+
+
     def Training_Stage3(self, start_temp=30.0, task_time=40, max_trials=100,
                         temp_change=3.0, choice_window=15, temp_hold_time=10, iti_duration=0,
                         attenuation_rate=0.03, optimal_min=27.0, optimal_max=33.0,
                         choice_min=10.0, choice_max=40.0, state_change_prob=0.7):
         """
         Stage 3: Full Task - No State Cue
-        - 목표: State cue 없이 Full task 수행
-        - Attenuation: ON (0.03°C/초)
-        - State: 있음 (cue 없음 - 마우스가 추론)
+        - 紐⑺몴: State cue ?놁씠 Full task ?섑뻾
+        - Attenuation: ON (0.03째C/珥?
+        - State: ?덉쓬 (cue ?놁쓬 - 留덉슦?ㅺ? 異붾줎)
         """
         print("=== Training Stage 3: Full Task (No State Cue) ===")
-        
+
         file_name_td = self.file_trialdata + "_trial-wise.csv"
         directory = os.path.dirname(file_name_td)
         col_name_td = ['mouseID', 'Day', 'Task', 'Trial', 'Time', 'Event',
                        'Current_Temp', 'Target_Temp', 'Poke_pos', 'Response_Time', 'State', 'Attenuation_Active']
-        
-        
+
+
         # Load parameters from JSON if available
         if "TS_params" in self.data and "Stage3" in self.data["TS_params"]:
             params = self.data["TS_params"]["Stage3"]
@@ -1749,179 +1740,179 @@ class Task:
             temp_hold_time = params.get("temp_hold_time", temp_hold_time)
             print(f"Loaded Stage 3 params from JSON: task_time={task_time}, choice_window={choice_window}, temp_hold_time={temp_hold_time}")
 
-        # 초기 설정
+        # 珥덇린 ?ㅼ젙
         target_temp = start_temp
         self.peltier_queue.put(("SET_TEMP", target_temp))
         self.peltier_queue.put(("SET_ATTENUATION_DIRECT", 0))
-        
+
         # 2026-02-16 Modify: Alternating start state based on day
         if self.day % 2 == 0:
             current_state = 'hot'  # Even day -> Hot start
         else:
             current_state = 'cold' # Odd day -> Cold start
-        
+
         # current_state = random.choice(['hot', 'cold'])
         attenuation_active = False
-        
+
         trial = 0
         start_Ex = time.time()
-        
-        # 초기 온도 도달 대기
-        print(f"Waiting for initial temperature: {target_temp}°C")
+
+        # 珥덇린 ?⑤룄 ?꾨떖 ?湲?
+        print(f"Waiting for initial temperature: {target_temp}째C")
         while True:
             with self.dict_lock:
                 curr_temp = self.shared_data["average_temp"]
             if curr_temp is not None and abs(curr_temp - target_temp) < 1.0:
                 break
             pygame.time.wait(500)
-        
-        # Stage 3: State cue 표시 안 함
+
+        # Stage 3: State cue ?쒖떆 ????
         self.screen.show()
         print(f"Initial State (hidden): {current_state}")
-        
-        # was_outside_optimal 초기화 (실제 온도 기반)
+
+        # was_outside_optimal 珥덇린??(?ㅼ젣 ?⑤룄 湲곕컲)
         was_outside_optimal = curr_temp < optimal_min or curr_temp > optimal_max
-        
+
         dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                   time.time() - self.start_time, "SessionStart", curr_temp, target_temp, 'n', 0, current_state, attenuation_active]
         self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
-        
-        # Trial 루프
+
+        # Trial 猷⑦봽
         while trial < max_trials and (time.time() - start_Ex) < task_time * 60:
             trial += 1
             print(f"\n--- Trial {trial} (State: {current_state} [hidden], Attenuation: {attenuation_active}) ---")
-            
+
             curr_temp, target_temp = self._get_shared_temperatures()
             if target_temp is None:
                 target_temp = start_temp
             if curr_temp is None:
                 curr_temp = target_temp
-            
+
             currently_outside_optimal = curr_temp < optimal_min or curr_temp > optimal_max
-            
-            # 1. Trial Cue (소리만, wait 없음) - Stage 3: State cue 없음
+
+            # 1. Trial Cue (?뚮━留? wait ?놁쓬) - Stage 3: State cue ?놁쓬
             self.reward.give(0.1)
             self.reward.give(0.1)
-            
+
             cue_time = time.time() - self.start_time
             dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                       cue_time, "TrialCue", curr_temp, target_temp, 'n', 0, current_state, attenuation_active]
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
-            
-            # 2. Choice Window - 양쪽 cue 표시
+
+            # 2. Choice Window - ?묒そ cue ?쒖떆
             self.screen.display_temp_both()
             choice_start = time.time()
             choice_tuple = [0, 0, 0, 0]
             poke_pos = 'n'
             response_time = 0
-            
+
             while (time.time() - choice_start) < choice_window:
                 poke_result = self.sensor2lmr(choice_tuple, choice_start, loop=False)
                 choice_tuple = poke_result[0]
-                
+
                 if len(poke_result) == 3:
                     poke_pos = poke_result[1]
                     response_time = time.time() - choice_start
                     break
-                    
-                pygame.time.wait(5)
-            
-            # 3. Choice 처리 + Outcome Phase
+
+                pygame.time.wait(SENSOR_POLL_WAIT_MS)
+
+            # 3. Choice 泥섎━ + Outcome Phase
             if poke_pos == 'l':  # Left = Hot
                 # Choice: LEFT (Hot)
-                print(f"Choice: LEFT (Hot) +{temp_change}°C")
+                print(f"Choice: LEFT (Hot) +{temp_change}째C")
                 if target_temp >= choice_max:
                     new_target = target_temp
                 else:
                     new_target = min(target_temp + temp_change, choice_max)
                 self.peltier_queue.put(("SET_TEMP", new_target))
-                
+
                 # Valid Choice Sound Cue
                 if new_target != target_temp:
                     self.reward.give(0.1)
-                
+
                 attenuation_active = False
                 self.peltier_queue.put(("SET_ATTENUATION_DIRECT", 0))
-                
-                # Outcome: 온도 상승 방향 표시
+
+                # Outcome: ?⑤룄 ?곸듅 諛⑺뼢 ?쒖떆
                 self.screen.show(state=["warm"])
-                
+
                 dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                           time.time() - self.start_time, "Choice_L_Hot", curr_temp, new_target, 'l', response_time, current_state, attenuation_active]
                 self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
-                
-                # State 전환 체크
+
+                # State ?꾪솚 泥댄겕
                 if was_outside_optimal and optimal_min <= new_target <= optimal_max:
                     if random.random() < state_change_prob:
                         current_state = 'cold' if prev_temp > optimal_max else 'hot'
                     else:
                         current_state = random.choice(['hot', 'cold'])
                     print(f"State changed to (hidden): {current_state}")
-                
+
                 pygame.time.wait(int(temp_hold_time * 1000))
-                
+
             elif poke_pos == 'r':  # Right = Cool
                 # Choice: RIGHT (Cool)
-                print(f"Choice: RIGHT (Cool) -{temp_change}°C")
+                print(f"Choice: RIGHT (Cool) -{temp_change}째C")
                 if target_temp <= choice_min:
                     new_target = target_temp
                 else:
                     new_target = max(target_temp - temp_change, choice_min)
                 self.peltier_queue.put(("SET_TEMP", new_target))
-                
+
                 # Valid Choice Sound Cue
                 if new_target != target_temp:
                     self.reward.give(0.1)
-                
+
                 attenuation_active = False
                 self.peltier_queue.put(("SET_ATTENUATION_DIRECT", 0))
-                
-                # Outcome: 온도 하강 방향 표시
+
+                # Outcome: ?⑤룄 ?섍컯 諛⑺뼢 ?쒖떆
                 self.screen.show(state=["cool"])
-                
+
                 dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                           time.time() - self.start_time, "Choice_R_Cool", curr_temp, new_target, 'r', response_time, current_state, attenuation_active]
                 self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
-                
-                # State 전환 체크
+
+                # State ?꾪솚 泥댄겕
                 if was_outside_optimal and optimal_min <= new_target <= optimal_max:
                     if random.random() < state_change_prob:
                         current_state = 'hot' if prev_temp < optimal_min else 'cold'
                     else:
                         current_state = random.choice(['hot', 'cold'])
                     print(f"State changed to (hidden): {current_state}")
-                
+
                 pygame.time.wait(int(temp_hold_time * 1000))
-                
+
             else:  # No choice
                 print("No Choice - Attenuation activated")
-                
+
                 attenuation_active = True
                 attenuation_direction = attenuation_rate if current_state == 'hot' else -attenuation_rate
                 self.peltier_queue.put(("SET_ATTENUATION_DIRECT", attenuation_direction))
-                
-                # Outcome: Attenuation 방향 표시 (Stage 3에서는 마우스가 추론해야 하지만 시각적 피드백 제공)
+
+                # Outcome: Attenuation 諛⑺뼢 ?쒖떆 (Stage 3?먯꽌??留덉슦?ㅺ? 異붾줎?댁빞 ?섏?留??쒓컖???쇰뱶諛??쒓났)
                 self.screen.show()
-                
+
                 dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                           time.time() - self.start_time, "NoChoice", curr_temp, target_temp, 'n', 0, current_state, attenuation_active]
                 self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
-                
+
                 pygame.time.wait(int(temp_hold_time * 1000))
-            
-            # 4. ITI - 화면 OFF
+
+            # 4. ITI - ?붾㈃ OFF
             self.screen.show()
             pygame.time.wait(int(iti_duration * 1000))
-            
+
             with self.dict_lock:
                 curr_temp = self.shared_data["average_temp"]
             was_outside_optimal = curr_temp < optimal_min or curr_temp > optimal_max
-        
-        # 세션 종료
+
+        # ?몄뀡 醫낅즺
         dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                   time.time() - self.start_time, "SessionEnd", curr_temp, target_temp, 'n', 0, current_state, attenuation_active]
         self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
-        
+
         print(f"\n=== Stage 3 Complete: {trial} trials ===")
         self.screen.show(state=["g"])
         self.stop_event.set()
@@ -1936,9 +1927,9 @@ class Task:
                    optimal_ref=30.0, att_min=15.0, att_max=45.0):
         """
         New Protocol Stage 1: Center Poke -> Temperature Change
-        - Center에 현재 온도 기반으로 항상 정답 cue를 표시
-        - 마우스가 center를 poke하면 즉시 온도 변화
-        - Attenuation 있음 (0.02도/초)
+        - Center???꾩옱 ?⑤룄 湲곕컲?쇰줈 ??긽 ?뺣떟 cue瑜??쒖떆
+        - 留덉슦?ㅺ? center瑜?poke?섎㈃ 利됱떆 ?⑤룄 蹂??
+        - Attenuation ?덉쓬 (0.02??珥?
         """
         print("=== New Protocol Stage 1: Center Poke -> Temp Change ===")
 
@@ -1949,17 +1940,17 @@ class Task:
 
         target_temp = start_temp
         self.peltier_queue.put(("SET_TEMP", target_temp))
-        self.peltier_queue.put(("SET_ATTENUATION_DIRECT", 0))  # 대기 중 일단 OFF
+        self.peltier_queue.put(("SET_ATTENUATION_DIRECT", 0))  # ?湲?以??쇰떒 OFF
 
-        # Day 기준 state 결정 (홀수=cold start, 짝수=hot start)
+        # Day 湲곗? state 寃곗젙 (???cold start, 吏앹닔=hot start)
         current_state, attenuation_sign, state_switch_after_sec, state_switched = self._init_ns_attenuation_state()
 
         poke_count = 0
         start_Ex = time.time()
         attenuation_active = False
 
-        # 초기 온도 도달 대기
-        print(f"Waiting for initial temperature: {target_temp}°C")
+        # 珥덇린 ?⑤룄 ?꾨떖 ?湲?
+        print(f"Waiting for initial temperature: {target_temp}째C")
         while True:
             with self.dict_lock:
                 curr_temp = self.shared_data["average_temp"]
@@ -1967,7 +1958,7 @@ class Task:
                 break
             pygame.time.wait(500)
 
-        # Attenuation 시작
+        # Attenuation ?쒖옉
         self.peltier_queue.put(("SET_ATTENUATION_DIRECT", attenuation_rate * attenuation_sign))
         attenuation_active = True
 
@@ -1975,11 +1966,11 @@ class Task:
                   time.time() - self.start_time, "SessionStart", curr_temp, target_temp, 'n', current_state]
         self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-        print(f"State: {current_state}, Attenuation: {attenuation_rate * attenuation_sign:+.4f}°C/s")
+        print(f"State: {current_state}, Attenuation: {attenuation_rate * attenuation_sign:+.4f}째C/s")
 
-        att_resume_time = 0.0  # attenuation 재활성화 예약 시각 (0.0 = 즉시 가능)
+        att_resume_time = 0.0  # attenuation ?ы솢?깊솕 ?덉빟 ?쒓컖 (0.0 = 利됱떆 媛??
 
-        # 메인 루프
+        # 硫붿씤 猷⑦봽
         while (time.time() - start_Ex) < task_time * 60:
             if not attenuation_active and time.time() >= att_resume_time:
                 self.peltier_queue.put(("SET_ATTENUATION_DIRECT", attenuation_rate * attenuation_sign))
@@ -2008,12 +1999,12 @@ class Task:
                       cue_time, "CueOn", curr_temp, target_temp, cue_type, current_state]
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-            print(f"  Cue: {cue_type.upper()} | Temp: {curr_temp:.1f}°C | Waiting center poke...")
+            print(f"  Cue: {cue_type.upper()} | Temp: {curr_temp:.1f}째C | Waiting center poke...")
 
-            # Center poke 대기
+            # Center poke ?湲?
             choice_tuple = [0, 0, 0, 0]
             center_poked = False
-            switched_now = False  # inner loop 진입 전 초기화 (outer loop 이중 기록 방지)
+            switched_now = False  # inner loop 吏꾩엯 ??珥덇린??(outer loop ?댁쨷 湲곕줉 諛⑹?)
             while not center_poked:
                 current_state, attenuation_sign, state_switched, switched_now = self._maybe_switch_ns_attenuation_state(
                     start_Ex, current_state, attenuation_sign, state_switch_after_sec,
@@ -2043,28 +2034,28 @@ class Task:
                     center_poked = True
                     poke_count += 1
                     poke_time = time.time() - self.start_time
-                    # 센서에서 나올 때까지 대기
+                    # ?쇱꽌?먯꽌 ?섏삱 ?뚭퉴吏 ?湲?
                     while self.sensor.get()[2] == 1:
-                        pygame.time.wait(5)
+                        pygame.time.wait(SENSOR_POLL_WAIT_MS)
                     choice_tuple[2] = 0
                 if not attenuation_active and time.time() >= att_resume_time:
                     self.peltier_queue.put(("SET_ATTENUATION_DIRECT", attenuation_rate * attenuation_sign))
                     attenuation_active = True
-                pygame.time.wait(5)
+                pygame.time.wait(SENSOR_POLL_WAIT_MS)
 
             if not center_poked:
-                break  # 세션 종료
+                break  # ?몄뀡 醫낅즺
 
             print(f"  Center poke #{poke_count}! (Cue was: {cue_type.upper()})")
 
             # Sound cue
             self.reward.give(0.1)
 
-            # Attenuation OFF (온도 변화 동안 일시 중단)
+            # Attenuation OFF (?⑤룄 蹂???숈븞 ?쇱떆 以묐떒)
             self.peltier_queue.put(("SET_ATTENUATION_DIRECT", 0))
             attenuation_active = False
 
-            # 온도 변화 지시
+            # ?⑤룄 蹂??吏??
             curr_temp, current_target = self._get_shared_temperatures()
             if curr_temp is None:
                 curr_temp = current_target if current_target is not None else target_temp
@@ -2078,12 +2069,12 @@ class Task:
                       poke_time, "CenterPoke", curr_temp, new_target, cue_type, current_state]
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-            print(f"  Temp change: {curr_temp:.1f} -> {new_target:.1f}°C")
+            print(f"  Temp change: {curr_temp:.1f} -> {new_target:.1f}째C")
 
-            # 흰 화면 (온도 변화 중 대기)
+            # ???붾㈃ (?⑤룄 蹂??以??湲?
             self.screen.show(state=["w"])
 
-            # 목표온도 도달 대기
+            # 紐⑺몴?⑤룄 ?꾨떖 ?湲?
             reached_target = False
             wait_start = time.time()
             while True:
@@ -2099,7 +2090,7 @@ class Task:
                 if curr_temp is not None and abs(curr_temp - new_target) <= temp_tolerance:
                     reached_target = True
                     break
-                if time.time() - wait_start > 60:  # 최대 60초 대기
+                if time.time() - wait_start > 60:  # 理쒕? 60珥??湲?
                     break
                 pygame.time.wait(200)
 
@@ -2107,11 +2098,11 @@ class Task:
                       time.time() - self.start_time, "TempReached" if reached_target else "TempTimeout", curr_temp, new_target, cue_type, current_state]
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-            # 온도 도달 후 30초간 attenuation 비활성화 유지 (비블로킹)
+            # ?⑤룄 ?꾨떖 ??30珥덇컙 attenuation 鍮꾪솢?깊솕 ?좎? (鍮꾨툝濡쒗궧)
             att_resume_time = time.time() + 30
             print(f"Attenuation hold: resumes in 30s")
 
-        # 세션 종료
+        # ?몄뀡 醫낅즺
         curr_temp, target_temp = self._get_shared_temperatures()
         if target_temp is None:
             target_temp = start_temp
@@ -2128,12 +2119,12 @@ class Task:
         """
         TRL1: Center-only reversal. Attenuation off until first center poke.
 
-        Each poke: (1) 보상 후 흰 화면 ON → 센터 포크 불가(대기 루프 밖),
-        (2) drift OFF + 명령 목표 ±bump_deg,
-        (3) 실측이 범프 목표 도달 시 흰 화면 OFF → 포크 가능,
-        (4) attenuation_rate (°C/s) 드리프트 ON.
+        Each poke: (1) 蹂댁긽 ?????붾㈃ ON ???쇳꽣 ?ы겕 遺덇?(?湲?猷⑦봽 諛?,
+        (2) drift OFF + 紐낅졊 紐⑺몴 짹bump_deg,
+        (3) ?ㅼ륫??踰뷀봽 紐⑺몴 ?꾨떖 ?????붾㈃ OFF ???ы겕 媛??
+        (4) attenuation_rate (째C/s) ?쒕━?꾪듃 ON.
 
-        white_sec 인자는 하위 호환용(미사용). 흰 화면 길이는 범프 목표 도달까지.
+        white_sec ?몄옄???섏쐞 ?명솚??誘몄궗??. ???붾㈃ 湲몄씠??踰뷀봽 紐⑺몴 ?꾨떖源뚯?.
         Preview cue: hot = next heating bump, cold = next cooling bump.
         """
         print("=== TRL1: Center attenuation reversal ===")
@@ -2179,9 +2170,9 @@ class Task:
                     poke_count += 1
                     poke_time = time.time() - self.start_time
                     while self.sensor.get()[2] == 1:
-                        pygame.time.wait(5)
+                        pygame.time.wait(SENSOR_POLL_WAIT_MS)
                     choice_tuple[2] = 0
-                pygame.time.wait(5)
+                pygame.time.wait(SENSOR_POLL_WAIT_MS)
 
             if session_done or not center_poked:
                 break
@@ -2191,8 +2182,8 @@ class Task:
             curr_temp, target_temp = self._get_shared_temperatures()
             if curr_temp is None:
                 curr_temp = target_temp if target_temp is not None else start_temp
-            # 범프는 반드시 "현재 명령 목표" 기준(드리프트 중 목표가 챔버보다 앞서 있을 때
-            # 실측만 쓰면 한 포크에 수십 °C 목표 점프가 날 수 있음 — batch6 TRL1 로그에서 확인됨)
+            # 踰뷀봽??諛섎뱶??"?꾩옱 紐낅졊 紐⑺몴" 湲곗?(?쒕━?꾪듃 以?紐⑺몴媛 梨붾쾭蹂대떎 ?욎꽌 ?덉쓣 ??
+            # ?ㅼ륫留??곕㈃ ???ы겕???섏떗 째C 紐⑺몴 ?먰봽媛 ?????덉쓬 ??batch6 TRL1 濡쒓렇?먯꽌 ?뺤씤??
             ref = target_temp
             if ref is None or not math.isfinite(ref):
                 ref = curr_temp
@@ -2215,10 +2206,10 @@ class Task:
 
             print(
                 f"[TRL1] Poke #{poke_count} ({new_mode}): "
-                f"cmd_ref={ref:.3f}°C, avg_now={curr_temp:.3f}°C → bump_target={new_target:.3f}°C"
+                f"cmd_ref={ref:.3f}째C, avg_now={curr_temp:.3f}째C ??bump_target={new_target:.3f}째C"
             )
 
-            # 범프 시작: 흰 화면 + 이 구간에서는 포크 대기 루프에 없어 연속 포크 불가
+            # 踰뷀봽 ?쒖옉: ???붾㈃ + ??援ш컙?먯꽌???ы겕 ?湲?猷⑦봽???놁뼱 ?곗냽 ?ы겕 遺덇?
             self.screen.show(state=["w"])
             dt_row = [self.mouseid, self.day, self.trainingstep, poke_count,
                       time.time() - self.start_time, "WhiteOn", curr_temp, new_target, preview, new_mode]
@@ -2232,7 +2223,7 @@ class Task:
             if (time.time() - start_Ex) >= task_time * 60:
                 session_done = True
 
-            # 범프 목표 도달(또는 타임아웃) 시 흰 화면 종료 → 다시 포크 가능
+            # 踰뷀봽 紐⑺몴 ?꾨떖(?먮뒗 ??꾩븘?? ?????붾㈃ 醫낅즺 ???ㅼ떆 ?ы겕 媛??
             self.screen.show()
             curr_temp, target_temp = self._get_shared_temperatures()
             dt_row = [self.mouseid, self.day, self.trainingstep, poke_count,
@@ -2245,8 +2236,8 @@ class Task:
                 last_s = "n/a"
             print(
                 f"[TRL1] Bump arrival: {'OK' if ok_bump else 'TIMEOUT'}, "
-                f"last_avg={last_s}°C, bump_target={new_target:.3f}°C "
-                f"(tol ±{bump_arrival_tolerance}°C)"
+                f"last_avg={last_s}째C, bump_target={new_target:.3f}째C "
+                f"(tol 짹{bump_arrival_tolerance}째C)"
             )
             if not ok_bump:
                 print(
@@ -2276,10 +2267,10 @@ class Task:
              attenuation_rate=0.07, task_time=60,
              bump_arrival_tolerance=1.0, bump_arrival_timeout_sec=180.0):
         """
-        TRL2: 방향 학습. left = cold choice(감쇠 냉각), right = hot choice(감쇠 가열).
-        한 시점에는 한쪽만 큐 제시(hot↔cold 번갈아). 비활성 구멍 poke는 무시.
-        올바른 poke → 흰화면 + 감쇠 정지 → ±bump_deg → 흰화면 해제 후
-        다음 큐로 전환하고, hot 완료 후에는 +rate 냉각 큐(좌), cold 완료 후에는 -rate 가열 큐(우).
+        TRL2: 諛⑺뼢 ?숈뒿. left = cold choice(媛먯뇿 ?됯컖), right = hot choice(媛먯뇿 媛??.
+        ???쒖젏?먮뒗 ?쒖そ留????쒖떆(hot?봠old 踰덇컝??. 鍮꾪솢??援щ찉 poke??臾댁떆.
+        ?щ컮瑜?poke ???고솕硫?+ 媛먯뇿 ?뺤? ??짹bump_deg ???고솕硫??댁젣 ??
+        ?ㅼ쓬 ?먮줈 ?꾪솚?섍퀬, hot ?꾨즺 ?꾩뿉??+rate ?됯컖 ??醫?, cold ?꾨즺 ?꾩뿉??-rate 媛??????.
         """
         print("=== TRL2: Side alternating hot/cold cue ===")
 
@@ -2291,7 +2282,7 @@ class Task:
         self.peltier_queue.put(("SET_TEMP", start_temp))
         self.peltier_queue.put(("SET_ATTENUATION_DIRECT", (0.0, temp_min, temp_max)))
 
-        # 'hot' = right만 유효, 'cold' = left만 유효. 첫 제시는 hot(우).
+        # 'hot' = right留??좏슚, 'cold' = left留??좏슚. 泥??쒖떆??hot(??.
         active_cue = 'hot'
         trial = 0
         start_Ex = time.time()
@@ -2329,7 +2320,7 @@ class Task:
                         trial += 1
                         poke_t = time.time() - self.start_time
                         while self.sensor.get()[3] == 1:
-                            pygame.time.wait(5)
+                            pygame.time.wait(SENSOR_POLL_WAIT_MS)
                 else:
                     if s[1] == 1 and prev_s[1] == 0:
                         correct = True
@@ -2337,9 +2328,9 @@ class Task:
                         trial += 1
                         poke_t = time.time() - self.start_time
                         while self.sensor.get()[1] == 1:
-                            pygame.time.wait(5)
+                            pygame.time.wait(SENSOR_POLL_WAIT_MS)
                 prev_s = s
-                pygame.time.wait(5)
+                pygame.time.wait(SENSOR_POLL_WAIT_MS)
 
             if session_done:
                 break
@@ -2366,8 +2357,8 @@ class Task:
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
             print(
-                f"[TRL2] trial {trial} ({active_cue}): ref={ref:.3f}°C → bump_target={new_target:.3f}°C, "
-                f"next drift={'+' if att_sign_after > 0 else '-'}{attenuation_rate}°C/s"
+                f"[TRL2] trial {trial} ({active_cue}): ref={ref:.3f}째C ??bump_target={new_target:.3f}째C, "
+                f"next drift={'+' if att_sign_after > 0 else '-'}{attenuation_rate}째C/s"
             )
 
             self.screen.show(state=["w"])
@@ -2416,18 +2407,18 @@ class Task:
              bump_arrival_tolerance=1.0, bump_arrival_timeout_sec=180.0,
              single_cue_probability=0.5, max_consecutive_both=3):
         """
-        TRL3: TRL_main과 동일한 범프·감쇠(att) 로직.
-        매 trial마다 P(both)=(1-single_cue_probability)로 양쪽 큐(TRL_main),
-        P(single)=single_cue_probability로 한쪽만 큐.
-        single-cue: trial 시작 시점 att_sign(드리프트 부호, hot=+1 / cold=-1)에 따라
-        감쇠 방향의 반대쪽 큐만 제시(att off(0)이면 hot 큐).
-        양쪽 큐(both)는 연속 max_consecutive_both회까지만 허용(기본 3 → 네 번째 연속 both는 금지).
+        TRL3: TRL_main怨??숈씪??踰뷀봽쨌媛먯뇿(att) 濡쒖쭅.
+        留?trial留덈떎 P(both)=(1-single_cue_probability)濡??묒そ ??TRL_main),
+        P(single)=single_cue_probability濡??쒖そ留???
+        single-cue: trial ?쒖옉 ?쒖젏 att_sign(?쒕━?꾪듃 遺?? hot=+1 / cold=-1)???곕씪
+        媛먯뇿 諛⑺뼢??諛섎?履??먮쭔 ?쒖떆(att off(0)?대㈃ hot ??.
+        ?묒そ ??both)???곗냽 max_consecutive_both?뚭퉴吏留??덉슜(湲곕낯 3 ????踰덉㎏ ?곗냽 both??湲덉?).
         """
         print("=== TRL3: mixed single-cue / both-cue (att off until bump; then directional drift) ===")
         _both_nominal_pct = (1.0 - single_cue_probability) * 100.0
         print(
-            f"[TRL3] nominal both-cue ≈ {_both_nominal_pct:.1f}% / single-cue ≈ "
-            f"{single_cue_probability * 100.0:.1f}% (연속 both 상한으로 실제 비율은 다를 수 있음)"
+            f"[TRL3] nominal both-cue ??{_both_nominal_pct:.1f}% / single-cue ??"
+            f"{single_cue_probability * 100.0:.1f}% (?곗냽 both ?곹븳?쇰줈 ?ㅼ젣 鍮꾩쑉? ?ㅻ? ???덉쓬)"
         )
 
         def _trl3_att_label(sign):
@@ -2483,18 +2474,18 @@ class Task:
                         trial += 1
                         poke_t = time.time() - self.start_time
                         while self.sensor.get()[3] == 1:
-                            pygame.time.wait(5)
+                            pygame.time.wait(SENSOR_POLL_WAIT_MS)
                     elif s[1] == 1 and prev_s[1] == 0:
                         choice = 'cold'
                         poke_pos = 'left'
                         trial += 1
                         poke_t = time.time() - self.start_time
                         while self.sensor.get()[1] == 1:
-                            pygame.time.wait(5)
+                            pygame.time.wait(SENSOR_POLL_WAIT_MS)
                     prev_s = s
-                    pygame.time.wait(5)
+                    pygame.time.wait(SENSOR_POLL_WAIT_MS)
             else:
-                # trial 시작 시점 감쇠(드리프트) 방향과 반대 큐만 제시
+                # trial ?쒖옉 ?쒖젏 媛먯뇿(?쒕━?꾪듃) 諛⑺뼢怨?諛섎? ?먮쭔 ?쒖떆
                 active_cue = 'cold' if att_sign > 0 else 'hot'
                 if active_cue == 'hot':
                     self.screen.display_temp_cue('hot')
@@ -2516,7 +2507,7 @@ class Task:
                             trial += 1
                             poke_t = time.time() - self.start_time
                             while self.sensor.get()[3] == 1:
-                                pygame.time.wait(5)
+                                pygame.time.wait(SENSOR_POLL_WAIT_MS)
                     else:
                         if s[1] == 1 and prev_s[1] == 0:
                             correct = True
@@ -2525,9 +2516,9 @@ class Task:
                             trial += 1
                             poke_t = time.time() - self.start_time
                             while self.sensor.get()[1] == 1:
-                                pygame.time.wait(5)
+                                pygame.time.wait(SENSOR_POLL_WAIT_MS)
                     prev_s = s
-                    pygame.time.wait(5)
+                    pygame.time.wait(SENSOR_POLL_WAIT_MS)
 
             if session_done:
                 break
@@ -2553,7 +2544,7 @@ class Task:
 
             print(
                 f"[TRL3] trial {trial} layout={cue_layout} choice={choice}, att_sign before={_trl3_att_label(att_sign)}, "
-                f"ref={ref:.3f}°C → bump_target={new_target:.3f}°C (clamped to [{temp_min}, {temp_max}])"
+                f"ref={ref:.3f}째C ??bump_target={new_target:.3f}째C (clamped to [{temp_min}, {temp_max}])"
             )
 
             self.screen.show(state=["w"])
@@ -2610,9 +2601,9 @@ class Task:
                  attenuation_rate=0.07, task_time=60,
                  bump_arrival_tolerance=1.0, bump_arrival_timeout_sec=180.0):
         """
-        TRL_main: TRL2와 동일하게 시작 — 감쇠 0, 좌 cold·우 hot 동시 제시(항상).
-        범프 목표: ref±bump_deg 후 [temp_min, temp_max]로 클램프(hot 상한·cold 하한 동일 규칙).
-        범프 후 감쇠 방향: choice_sign( hot=+1, cold=-1 )와 att_sign이 같으면 유지, 다르면 att_sign=choice_sign.
+        TRL_main: TRL2? ?숈씪?섍쾶 ?쒖옉 ??媛먯뇿 0, 醫?cold쨌??hot ?숈떆 ?쒖떆(??긽).
+        踰뷀봽 紐⑺몴: ref짹bump_deg ??[temp_min, temp_max]濡??대옩??hot ?곹븳쨌cold ?섑븳 ?숈씪 洹쒖튃).
+        踰뷀봽 ??媛먯뇿 諛⑺뼢: choice_sign( hot=+1, cold=-1 )? att_sign??媛숈쑝硫??좎?, ?ㅻⅤ硫?att_sign=choice_sign.
         """
         print("=== TRL_main: Both cues from start (att off); hot/cold bump + directional att ===")
 
@@ -2629,7 +2620,7 @@ class Task:
         self.peltier_queue.put(("SET_TEMP", start_temp))
         self.peltier_queue.put(("SET_ATTENUATION_DIRECT", (0.0, temp_min, temp_max)))
 
-        # 0 = 감쇠 끔(TRL2 초기와 동일), +1 = hot drift, -1 = cold drift
+        # 0 = 媛먯뇿 ??TRL2 珥덇린? ?숈씪), +1 = hot drift, -1 = cold drift
         att_sign = 0.0
         trial = 0
         start_Ex = time.time()
@@ -2663,16 +2654,16 @@ class Task:
                     trial += 1
                     poke_t = time.time() - self.start_time
                     while self.sensor.get()[3] == 1:
-                        pygame.time.wait(5)
+                        pygame.time.wait(SENSOR_POLL_WAIT_MS)
                 elif s[1] == 1 and prev_s[1] == 0:
                     choice = 'cold'
                     poke_pos = 'left'
                     trial += 1
                     poke_t = time.time() - self.start_time
                     while self.sensor.get()[1] == 1:
-                        pygame.time.wait(5)
+                        pygame.time.wait(SENSOR_POLL_WAIT_MS)
                 prev_s = s
-                pygame.time.wait(5)
+                pygame.time.wait(SENSOR_POLL_WAIT_MS)
 
             if session_done:
                 break
@@ -2698,7 +2689,7 @@ class Task:
 
             print(
                 f"[TRL_main] trial {trial} choice={choice}, att_sign before={_trl3_att_label(att_sign)}, "
-                f"ref={ref:.3f}°C → bump_target={new_target:.3f}°C (clamped to [{temp_min}, {temp_max}])"
+                f"ref={ref:.3f}째C ??bump_target={new_target:.3f}째C (clamped to [{temp_min}, {temp_max}])"
             )
 
             self.screen.show(state=["w"])
@@ -2747,7 +2738,7 @@ class Task:
         print("=== TRL_main Session Ended ===")
 
     # ============================================================
-    # Temperature Lift (TL) - 선행 학습 단계
+    # Temperature Lift (TL) - ?좏뻾 ?숈뒿 ?④퀎
     # ============================================================
 
     def _run_temperature_lift(self, bump_choices,
@@ -2759,15 +2750,15 @@ class Task:
                               task_time=60, blink_period=1.0,
                               trial_start_reward=0.1, choice_reward=0.1):
         """
-        TL 공통 코어. Left-only, trial-based.
-        - 한 trial: choice window(기본 20s) + feedback window(기본 40s).
+        TL 怨듯넻 肄붿뼱. Left-only, trial-based.
+        - ??trial: choice window(湲곕낯 20s) + feedback window(湲곕낯 40s).
         - Continuous drift is disabled; the setpoint is held during the choice window.
-        - choice window 동안 left poke(sensor[1]) 발생 시 즉시 feedback 시작.
-          미발생 시 no choice로 기록 후 feedback 시작. left 외 poke는 무시.
-        - choice한 경우 feedback window 동안 drift 정지 + (choice 시점 측정 avg + bump)로 SET_TEMP,
-          끝까지 유지. no choice면 feedback 시작 때 balanced random drop을 적용.
-        - choice 상승폭 bump는 20-trial balanced random bag에서 선택.
-        - sound cue = reward 밸브 소리: trial 시작 + left poke 시 reward.give.
+        - choice window ?숈븞 left poke(sensor[1]) 諛쒖깮 ??利됱떆 feedback ?쒖옉.
+          誘몃컻????no choice濡?湲곕줉 ??feedback ?쒖옉. left ??poke??臾댁떆.
+        - choice??寃쎌슦 feedback window ?숈븞 drift ?뺤? + (choice ?쒖젏 痢≪젙 avg + bump)濡?SET_TEMP,
+          ?앷퉴吏 ?좎?. no choice硫?feedback ?쒖옉 ??balanced random drop???곸슜.
+        - choice ?곸듅??bump??20-trial balanced random bag?먯꽌 ?좏깮.
+        - sound cue = reward 諛몃툕 ?뚮━: trial ?쒖옉 + left poke ??reward.give.
         """
         file_name_td = self.file_trialdata + "_trial-wise.csv"
         directory = os.path.dirname(file_name_td)
@@ -2831,13 +2822,13 @@ class Task:
             if shared_start_temp < temp_min or shared_start_temp > temp_max:
                 clamped_start = max(temp_min, min(shared_start_temp, temp_max))
                 print(
-                    f"[TL] initial target {shared_start_temp}°C is outside "
-                    f"{temp_min}-{temp_max}°C; clamped to {clamped_start}°C"
+                    f"[TL] initial target {shared_start_temp}째C is outside "
+                    f"{temp_min}-{temp_max}째C; clamped to {clamped_start}째C"
                 )
                 start_temp = clamped_start
             else:
                 start_temp = shared_start_temp
-            print(f"[TL] using maintemp set-on target as start_temp: {start_temp}°C")
+            print(f"[TL] using maintemp set-on target as start_temp: {start_temp}째C")
 
         self.peltier_queue.put(("SET_TEMP", start_temp))
         self.peltier_queue.put(("SET_ATTENUATION_DIRECT", (0.0, temp_min, temp_max)))
@@ -2864,7 +2855,7 @@ class Task:
             outcome_delta = 'n'
             outcome_target = 'n'
 
-            # --- Trial 시작: target hold + sound cue(밸브 소리) ---
+            # --- Trial ?쒖옉: target hold + sound cue(諛몃툕 ?뚮━) ---
             self.peltier_queue.put(("SET_ATTENUATION_DIRECT", (0.0, temp_min, temp_max)))
             self.reward.give(trial_start_reward)
             curr_temp, target_temp = self._get_shared_temperatures()
@@ -2874,12 +2865,12 @@ class Task:
                       curr_temp, target_temp, 'n', 'n', 'n', 'n', 'n']
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-            # --- Choice window: left cue blink + left poke 검출 ---
+            # --- Choice window: left cue blink + left poke 寃異?---
             cw_start = time.time()
             prev_left = 0
             choice = False
             poke_t = None
-            blink_on = None  # None이면 첫 진입 시 강제 ON
+            blink_on = None  # None?대㈃ 泥?吏꾩엯 ??媛뺤젣 ON
             last_blink = cw_start
             while True:
                 now = time.time()
@@ -2889,7 +2880,7 @@ class Task:
                 if (now - cw_start) >= choice_window:
                     break
 
-                # cue blink (~blink_period 마다 토글)
+                # cue blink (~blink_period 留덈떎 ?좉?)
                 if blink_on is None or (now - last_blink) >= blink_period:
                     blink_on = True if blink_on is None else (not blink_on)
                     last_blink = now
@@ -2903,12 +2894,12 @@ class Task:
                     choice = True
                     poke_t = now - self.start_time
                     while self.sensor.get()[1] == 1:
-                        pygame.time.wait(5)
+                        pygame.time.wait(SENSOR_POLL_WAIT_MS)
                     break
                 prev_left = s[1]
-                pygame.time.wait(5)
+                pygame.time.wait(SENSOR_POLL_WAIT_MS)
 
-            # --- Choice 처리 ---
+            # --- Choice 泥섎━ ---
             if choice:
                 self.reward.give(choice_reward)
                 curr_temp, target_temp = self._get_shared_temperatures()
@@ -2925,8 +2916,8 @@ class Task:
                 outcome_delta = bump
                 outcome_target = new_target
 
-                print(f"[TL] trial {trial}: LeftPoke, target={base_temp:.3f}°C + bump {bump} "
-                      f"→ target {new_target:.3f}°C (RT={rt}s)")
+                print(f"[TL] trial {trial}: LeftPoke, target={base_temp:.3f}째C + bump {bump} "
+                      f"??target {new_target:.3f}째C (RT={rt}s)")
                 dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                           poke_t, "LeftPoke", curr_temp, new_target, 'l', bump, rt,
                           outcome_delta, outcome_target]
@@ -2955,7 +2946,7 @@ class Task:
             if session_done:
                 break
 
-            # --- Feedback window: poke 무시, 고정 타이머 ---
+            # --- Feedback window: poke 臾댁떆, 怨좎젙 ??대㉧ ---
             fb_start = time.time()
             while (time.time() - fb_start) < feedback_window:
                 if (time.time() - start_Ex) >= task_time * 60:
@@ -3007,8 +2998,8 @@ class Task:
                    optimal_ref=30.0, att_min=15.0, att_max=45.0, choice_timeout=120):
         """
         New Protocol Stage 2: Center Poke -> Side Cue -> Temp Change
-        - Center poke 시 현재 온도에 따른 정답측 side에 cue 제시
-        - 오답 side poke는 무시, 120초 timeout 시 cue 제거 후 처음으로
+        - Center poke ???꾩옱 ?⑤룄???곕Ⅸ ?뺣떟痢?side??cue ?쒖떆
+        - ?ㅻ떟 side poke??臾댁떆, 120珥?timeout ??cue ?쒓굅 ??泥섏쓬?쇰줈
         """
         print("=== New Protocol Stage 2: Center -> Side Cue -> Temp Change ===")
 
@@ -3027,7 +3018,7 @@ class Task:
         start_Ex = time.time()
         attenuation_active = False
 
-        print(f"Waiting for initial temperature: {target_temp}°C")
+        print(f"Waiting for initial temperature: {target_temp}째C")
         while True:
             current_state, attenuation_sign, state_switched, _switched = self._maybe_switch_ns_attenuation_state(
                 start_Ex, current_state, attenuation_sign, state_switch_after_sec,
@@ -3043,7 +3034,7 @@ class Task:
 
         self.peltier_queue.put(("SET_ATTENUATION_DIRECT", attenuation_rate * attenuation_sign))
         attenuation_active = True
-        self.screen.show()  # 빈 화면
+        self.screen.show()  # 鍮??붾㈃
 
         dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                   time.time() - self.start_time, "SessionStart", curr_temp, target_temp, 'n', 'n', current_state, 'n']
@@ -3051,7 +3042,7 @@ class Task:
 
         print(f"State: {current_state}")
 
-        att_resume_time = 0.0  # attenuation 재활성화 예약 시각 (0.0 = 즉시 가능)
+        att_resume_time = 0.0  # attenuation ?ы솢?깊솕 ?덉빟 ?쒓컖 (0.0 = 利됱떆 媛??
 
         while (time.time() - start_Ex) < task_time * 60:
             if not attenuation_active and time.time() >= att_resume_time:
@@ -3073,7 +3064,7 @@ class Task:
 
             self.screen.display_start_cue_center()
 
-            # Center poke 대기
+            # Center poke ?湲?
             choice_tuple = [0, 0, 0, 0]
             center_poked = False
             while not center_poked:
@@ -3097,12 +3088,12 @@ class Task:
                     choice_tuple[2] = 1
                     center_poked = True
                     while self.sensor.get()[2] == 1:
-                        pygame.time.wait(5)
+                        pygame.time.wait(SENSOR_POLL_WAIT_MS)
                     choice_tuple[2] = 0
                 if not attenuation_active and time.time() >= att_resume_time:
                     self.peltier_queue.put(("SET_ATTENUATION_DIRECT", attenuation_rate * attenuation_sign))
                     attenuation_active = True
-                pygame.time.wait(5)
+                pygame.time.wait(SENSOR_POLL_WAIT_MS)
 
             if not center_poked:
                 break
@@ -3124,9 +3115,9 @@ class Task:
                       center_poke_time, "CenterPoke", curr_temp, target_temp, cue_type, 'm', current_state, 'n']
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-            print(f"Trial {trial} | Temp: {curr_temp:.1f}°C | Cue: {cue_type.upper()} at {correct_side}")
+            print(f"Trial {trial} | Temp: {curr_temp:.1f}째C | Cue: {cue_type.upper()} at {correct_side}")
 
-            # Side poke 대기 (timeout: choice_timeout 초)
+            # Side poke ?湲?(timeout: choice_timeout 珥?
             side_choice_start = time.time()
             choice_tuple = [0, 0, 0, 0]
             result = 'timeout'
@@ -3167,14 +3158,14 @@ class Task:
                     poked_side = 'l'
                     poke_time = time.time() - self.start_time
                     while self.sensor.get()[1] == 1:
-                        pygame.time.wait(5)
+                        pygame.time.wait(SENSOR_POLL_WAIT_MS)
                     choice_tuple[1] = 0
                 elif current_sensor[3] == 1 and choice_tuple[3] == 0:
                     choice_tuple[3] = 1
                     poked_side = 'r'
                     poke_time = time.time() - self.start_time
                     while self.sensor.get()[3] == 1:
-                        pygame.time.wait(5)
+                        pygame.time.wait(SENSOR_POLL_WAIT_MS)
                     choice_tuple[3] = 0
 
                 if poked_side is not None:
@@ -3189,7 +3180,7 @@ class Task:
                                   poke_time, "WrongPoke", curr_temp, target_temp, cue_type, poked_side, current_state, 'wrong']
                         self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-                pygame.time.wait(5)
+                pygame.time.wait(SENSOR_POLL_WAIT_MS)
 
             if result == 'session_end':
                 self.screen.show()
@@ -3203,8 +3194,8 @@ class Task:
                 self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
                 continue
 
-            # 정답 처리
-            print(f"  Correct poke: {poke_pos} | Temp: {curr_temp:.1f} -> {new_target:.1f}°C")
+            # ?뺣떟 泥섎━
+            print(f"  Correct poke: {poke_pos} | Temp: {curr_temp:.1f} -> {new_target:.1f}째C")
             self.reward.give(0.1)
             self.peltier_queue.put(("SET_ATTENUATION_DIRECT", 0))
             attenuation_active = False
@@ -3239,7 +3230,7 @@ class Task:
                       time.time() - self.start_time, "TempReached" if reached_target else "TempTimeout", curr_temp, new_target, cue_type, poke_pos, current_state, 'correct' if reached_target else 'temp_timeout']
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-            # 온도 도달 후 30초간 attenuation 비활성화 유지 (비블로킹)
+            # ?⑤룄 ?꾨떖 ??30珥덇컙 attenuation 鍮꾪솢?깊솕 ?좎? (鍮꾨툝濡쒗궧)
             att_resume_time = time.time() + 30
             print(f"Attenuation hold: resumes in 30s")
             self.screen.show()
@@ -3250,9 +3241,9 @@ class Task:
                    attenuation_rate=0.07, temp_change=4.0, temp_tolerance=0.5,
                    optimal_ref=30.0, att_min=15.0, att_max=45.0, choice_timeout=120):
         """
-        New Protocol Stage 3: 50% 정답만 cue / 50% 양쪽 cue 혼합
-        - 정답만 trial: NS2와 동일 (오답 무시, 120초 timeout)
-        - 양쪽 trial: 둘 다 유효, 어느 쪽 poke해도 온도 변화
+        New Protocol Stage 3: 50% ?뺣떟留?cue / 50% ?묒そ cue ?쇳빀
+        - ?뺣떟留?trial: NS2? ?숈씪 (?ㅻ떟 臾댁떆, 120珥?timeout)
+        - ?묒そ trial: ?????좏슚, ?대뒓 履?poke?대룄 ?⑤룄 蹂??
         """
         print("=== New Protocol Stage 3: 50% Correct / 50% Both ===")
 
@@ -3271,7 +3262,7 @@ class Task:
         start_Ex = time.time()
         attenuation_active = False
 
-        print(f"Waiting for initial temperature: {target_temp}°C")
+        print(f"Waiting for initial temperature: {target_temp}째C")
         while True:
             current_state, attenuation_sign, state_switched, _switched = self._maybe_switch_ns_attenuation_state(
                 start_Ex, current_state, attenuation_sign, state_switch_after_sec,
@@ -3293,7 +3284,7 @@ class Task:
                   time.time() - self.start_time, "SessionStart", curr_temp, target_temp, 'n', 'n', current_state, 'n', 'n']
         self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-        att_resume_time = 0.0  # attenuation 재활성화 예약 시각 (0.0 = 즉시 가능)
+        att_resume_time = 0.0  # attenuation ?ы솢?깊솕 ?덉빟 ?쒓컖 (0.0 = 利됱떆 媛??
 
         while (time.time() - start_Ex) < task_time * 60:
             if not attenuation_active and time.time() >= att_resume_time:
@@ -3315,7 +3306,7 @@ class Task:
 
             self.screen.display_start_cue_center()
 
-            # Center poke 대기
+            # Center poke ?湲?
             choice_tuple = [0, 0, 0, 0]
             center_poked = False
             while not center_poked:
@@ -3339,12 +3330,12 @@ class Task:
                     choice_tuple[2] = 1
                     center_poked = True
                     while self.sensor.get()[2] == 1:
-                        pygame.time.wait(5)
+                        pygame.time.wait(SENSOR_POLL_WAIT_MS)
                     choice_tuple[2] = 0
                 if not attenuation_active and time.time() >= att_resume_time:
                     self.peltier_queue.put(("SET_ATTENUATION_DIRECT", attenuation_rate * attenuation_sign))
                     attenuation_active = True
-                pygame.time.wait(5)
+                pygame.time.wait(SENSOR_POLL_WAIT_MS)
 
             if not center_poked:
                 break
@@ -3361,7 +3352,7 @@ class Task:
 
             correct_cue, correct_side = self._ns_cue_for_temperature(curr_temp, optimal_ref)
 
-            # 50% 확률로 trial type 결정
+            # 50% ?뺣쪧濡?trial type 寃곗젙
             trial_type = 'both' if random.random() < 0.5 else 'correct_only'
 
             if trial_type == 'correct_only':
@@ -3375,9 +3366,9 @@ class Task:
                       center_poke_time, "CenterPoke", curr_temp, target_temp, cue_type, 'm', current_state, trial_type, 'n']
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-            print(f"Trial {trial} | Temp: {curr_temp:.1f}°C | Type: {trial_type} | Correct: {correct_side}")
+            print(f"Trial {trial} | Temp: {curr_temp:.1f}째C | Type: {trial_type} | Correct: {correct_side}")
 
-            # Side poke 대기
+            # Side poke ?湲?
             side_choice_start = time.time()
             choice_tuple = [0, 0, 0, 0]
             result = 'timeout'
@@ -3420,14 +3411,14 @@ class Task:
                     poked_side = 'l'
                     poke_time = time.time() - self.start_time
                     while self.sensor.get()[1] == 1:
-                        pygame.time.wait(5)
+                        pygame.time.wait(SENSOR_POLL_WAIT_MS)
                     choice_tuple[1] = 0
                 elif current_sensor[3] == 1 and choice_tuple[3] == 0:
                     choice_tuple[3] = 1
                     poked_side = 'r'
                     poke_time = time.time() - self.start_time
                     while self.sensor.get()[3] == 1:
-                        pygame.time.wait(5)
+                        pygame.time.wait(SENSOR_POLL_WAIT_MS)
                     choice_tuple[3] = 0
 
                 if poked_side is not None:
@@ -3442,13 +3433,13 @@ class Task:
                             dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                                       poke_time, "WrongPoke", curr_temp, target_temp, cue_type, poked_side, current_state, trial_type, 'wrong']
                             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
-                    else:  # both: 양쪽 모두 유효
+                    else:  # both: ?묒そ 紐⑤몢 ?좏슚
                         result = 'correct' if poked_side == correct_side else 'wrong_but_valid'
                         poke_pos = poked_side
                         new_target = self._ns_target_for_side(target_temp, poked_side, temp_change)
                         break
 
-                pygame.time.wait(5)
+                pygame.time.wait(SENSOR_POLL_WAIT_MS)
 
             if result == 'session_end':
                 self.screen.show()
@@ -3461,8 +3452,8 @@ class Task:
                 self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
                 continue
 
-            # 온도 변화 처리
-            print(f"  Poke: {poke_pos} | Result: {result} | Temp: {curr_temp:.1f} -> {new_target:.1f}°C")
+            # ?⑤룄 蹂??泥섎━
+            print(f"  Poke: {poke_pos} | Result: {result} | Temp: {curr_temp:.1f} -> {new_target:.1f}째C")
             self.reward.give(0.1)
             self.peltier_queue.put(("SET_ATTENUATION_DIRECT", 0))
             attenuation_active = False
@@ -3497,7 +3488,7 @@ class Task:
                       time.time() - self.start_time, "TempReached" if reached_target else "TempTimeout", curr_temp, new_target, cue_type, poke_pos, current_state, trial_type, result if reached_target else 'temp_timeout']
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-            # 온도 도달 후 30초간 attenuation 비활성화 유지 (비블로킹)
+            # ?⑤룄 ?꾨떖 ??30珥덇컙 attenuation 鍮꾪솢?깊솕 ?좎? (鍮꾨툝濡쒗궧)
             att_resume_time = time.time() + 30
             print(f"Attenuation hold: resumes in 30s")
             self.screen.show()
@@ -3508,9 +3499,9 @@ class Task:
                    attenuation_rate=0.07, temp_change=4.0, temp_tolerance=0.5,
                    optimal_ref=30.0, att_min=15.0, att_max=45.0, choice_timeout=120):
         """
-        New Protocol Stage 4: 항상 양쪽 cue (Full Both)
-        - Center poke -> display_temp_both() -> 양쪽 모두 유효
-        - NS3에서 'both' trial만 고정한 버전
+        New Protocol Stage 4: ??긽 ?묒そ cue (Full Both)
+        - Center poke -> display_temp_both() -> ?묒そ 紐⑤몢 ?좏슚
+        - NS3?먯꽌 'both' trial留?怨좎젙??踰꾩쟾
         """
         print("=== New Protocol Stage 4: Always Both Cue ===")
 
@@ -3529,7 +3520,7 @@ class Task:
         start_Ex = time.time()
         attenuation_active = False
 
-        print(f"Waiting for initial temperature: {target_temp}°C")
+        print(f"Waiting for initial temperature: {target_temp}째C")
         while True:
             current_state, attenuation_sign, state_switched, _switched = self._maybe_switch_ns_attenuation_state(
                 start_Ex, current_state, attenuation_sign, state_switch_after_sec,
@@ -3551,7 +3542,7 @@ class Task:
                   time.time() - self.start_time, "SessionStart", curr_temp, target_temp, 'n', 'n', current_state, 'n']
         self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-        att_resume_time = 0.0  # attenuation 재활성화 예약 시각 (0.0 = 즉시 가능)
+        att_resume_time = 0.0  # attenuation ?ы솢?깊솕 ?덉빟 ?쒓컖 (0.0 = 利됱떆 媛??
 
         while (time.time() - start_Ex) < task_time * 60:
             if not attenuation_active and time.time() >= att_resume_time:
@@ -3573,7 +3564,7 @@ class Task:
 
             self.screen.display_start_cue_center()
 
-            # Center poke 대기
+            # Center poke ?湲?
             choice_tuple = [0, 0, 0, 0]
             center_poked = False
             while not center_poked:
@@ -3597,12 +3588,12 @@ class Task:
                     choice_tuple[2] = 1
                     center_poked = True
                     while self.sensor.get()[2] == 1:
-                        pygame.time.wait(5)
+                        pygame.time.wait(SENSOR_POLL_WAIT_MS)
                     choice_tuple[2] = 0
                 if not attenuation_active and time.time() >= att_resume_time:
                     self.peltier_queue.put(("SET_ATTENUATION_DIRECT", attenuation_rate * attenuation_sign))
                     attenuation_active = True
-                pygame.time.wait(5)
+                pygame.time.wait(SENSOR_POLL_WAIT_MS)
 
             if not center_poked:
                 break
@@ -3625,9 +3616,9 @@ class Task:
                       center_poke_time, "CenterPoke", curr_temp, target_temp, correct_side, 'm', current_state, 'n']
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-            print(f"Trial {trial} | Temp: {curr_temp:.1f}°C | Correct side: {correct_side} (both shown)")
+            print(f"Trial {trial} | Temp: {curr_temp:.1f}째C | Correct side: {correct_side} (both shown)")
 
-            # Side poke 대기
+            # Side poke ?湲?
             side_choice_start = time.time()
             choice_tuple = [0, 0, 0, 0]
             result = 'timeout'
@@ -3666,14 +3657,14 @@ class Task:
                     poked_side = 'l'
                     poke_time = time.time() - self.start_time
                     while self.sensor.get()[1] == 1:
-                        pygame.time.wait(5)
+                        pygame.time.wait(SENSOR_POLL_WAIT_MS)
                     choice_tuple[1] = 0
                 elif current_sensor[3] == 1 and choice_tuple[3] == 0:
                     choice_tuple[3] = 1
                     poked_side = 'r'
                     poke_time = time.time() - self.start_time
                     while self.sensor.get()[3] == 1:
-                        pygame.time.wait(5)
+                        pygame.time.wait(SENSOR_POLL_WAIT_MS)
                     choice_tuple[3] = 0
 
                 if poked_side is not None:
@@ -3682,7 +3673,7 @@ class Task:
                     new_target = self._ns_target_for_side(target_temp, poked_side, temp_change)
                     break
 
-                pygame.time.wait(5)
+                pygame.time.wait(SENSOR_POLL_WAIT_MS)
 
             if result == 'session_end':
                 self.screen.show()
@@ -3695,7 +3686,7 @@ class Task:
                 self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
                 continue
 
-            print(f"  Poke: {poke_pos} | Result: {result} | Temp: {curr_temp:.1f} -> {new_target:.1f}°C")
+            print(f"  Poke: {poke_pos} | Result: {result} | Temp: {curr_temp:.1f} -> {new_target:.1f}째C")
             self.reward.give(0.1)
             self.peltier_queue.put(("SET_ATTENUATION_DIRECT", 0))
             attenuation_active = False
@@ -3730,7 +3721,7 @@ class Task:
                       time.time() - self.start_time, "TempReached" if reached_target else "TempTimeout", curr_temp, new_target, correct_side, poke_pos, current_state, result if reached_target else 'temp_timeout']
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-            # 온도 도달 후 30초간 attenuation 비활성화 유지 (비블로킹)
+            # ?⑤룄 ?꾨떖 ??30珥덇컙 attenuation 鍮꾪솢?깊솕 ?좎? (鍮꾨툝濡쒗궧)
             att_resume_time = time.time() + 30
             print(f"Attenuation hold: resumes in 30s")
             self.screen.show()
@@ -3785,27 +3776,27 @@ class POA_task(Task):
 # ============================================================
 
 class Training_Stage1_Cold(Task):
-    """Stage 1: 시작 온도 23°C (차가운 쪽에서 시작)"""
+    """Stage 1: ?쒖옉 ?⑤룄 23째C (李④???履쎌뿉???쒖옉)"""
     def task(self):
         self.Training_Stage1(start_temp=20.0)
 
 class Training_Stage1_Hot(Task):
-    """Stage 1: 시작 온도 37°C (뜨거운 쪽에서 시작)"""
+    """Stage 1: ?쒖옉 ?⑤룄 37째C (?④굅??履쎌뿉???쒖옉)"""
     def task(self):
         self.Training_Stage1(start_temp=40.0)
 
 class Training_Stage2_Cold(Task):
-    """Stage 2: 시작 온도 25°C (optimal 경계 차가운 쪽)"""
+    """Stage 2: ?쒖옉 ?⑤룄 25째C (optimal 寃쎄퀎 李④???履?"""
     def task(self):
         self.Training_Stage2(start_temp=20.0)
 
 class Training_Stage2_Hot(Task):
-    """Stage 2: 시작 온도 35°C (optimal 경계 뜨거운 쪽)"""
+    """Stage 2: ?쒖옉 ?⑤룄 35째C (optimal 寃쎄퀎 ?④굅??履?"""
     def task(self):
         self.Training_Stage2(start_temp=40.0)
 
 class Training_Stage3_Full(Task):
-    """Stage 3: Full Task (시작 온도 30°C, optimal 중앙)"""
+    """Stage 3: Full Task (?쒖옉 ?⑤룄 30째C, optimal 以묒븰)"""
     def task(self):
         self.Training_Stage3(start_temp=30.0)
 
@@ -3814,37 +3805,37 @@ class Training_Stage3_Full(Task):
 # ============================================================
 
 class New_Stage1_Task(Task):
-    """New Protocol Stage 1: Center poke → Temp change (center 정답 cue)"""
+    """New Protocol Stage 1: Center poke ??Temp change (center ?뺣떟 cue)"""
     def task(self):
         self.New_Stage1()
 
 class New_Stage2_Task(Task):
-    """New Protocol Stage 2: Center → Side cue → Temp change"""
+    """New Protocol Stage 2: Center ??Side cue ??Temp change"""
     def task(self):
         self.New_Stage2()
 
 class New_Stage3_Task(Task):
-    """New Protocol Stage 3: 50% correct_only / 50% both 혼합"""
+    """New Protocol Stage 3: 50% correct_only / 50% both ?쇳빀"""
     def task(self):
         self.New_Stage3()
 
 class New_Stage4_Task(Task):
-    """New Protocol Stage 4: 항상 양쪽 cue (Full Both)"""
+    """New Protocol Stage 4: ??긽 ?묒そ cue (Full Both)"""
     def task(self):
         self.New_Stage4()
 
 class TRL1_Task(Task):
-    """TRL1: Center-only; bump → white until chamber reaches bump target → drift 0.07°C/s."""
+    """TRL1: Center-only; bump ??white until chamber reaches bump target ??drift 0.07째C/s."""
     def task(self):
         self.TRL1()
 
 class TRL2_Task(Task):
-    """TRL2: 좌=cold, 우=hot 고정; 한 번에 한쪽만 큐, 번갈아 제시."""
+    """TRL2: 醫?cold, ??hot 怨좎젙; ??踰덉뿉 ?쒖そ留??? 踰덇컝???쒖떆."""
     def task(self):
         self.TRL2()
 
 class TRL3_Task(Task):
-    """TRL3: TRL_main과 동일 로직 + 단일/양쪽 확률 혼합; single은 att 방향 반대 큐; both 연속 최대 3회."""
+    """TRL3: TRL_main怨??숈씪 濡쒖쭅 + ?⑥씪/?묒そ ?뺣쪧 ?쇳빀; single? att 諛⑺뼢 諛섎? ?? both ?곗냽 理쒕? 3??"""
 
     def __init__(
         self,
@@ -3881,17 +3872,17 @@ class TRL3_Task(Task):
         self.TRL3(single_cue_probability=single_cue_probability)
 
 class TRL_main_Task(Task):
-    """TRL_main: 항상 양쪽 큐; 범프·감쇠는 구 TRL3와 동일."""
+    """TRL_main: ??긽 ?묒そ ?? 踰뷀봽쨌媛먯뇿??援?TRL3? ?숈씪."""
     def task(self):
         self.TRL_main()
 
 class TL1_Task(Task):
-    """TL1: left-only, choice 시 +5°C, no-choice 시 -5°C, 20s/40s window."""
+    """TL1: left-only, choice ??+5째C, no-choice ??-5째C, 20s/40s window."""
     def task(self):
         self.TL1()
 
 class TL2_Task(Task):
-    """TL2: left-only, choice 시 +3/3.5/4°C, no-choice 시 -1.5/-2/-2.5°C."""
+    """TL2: left-only, choice ??+3/3.5/4째C, no-choice ??-1.5/-2/-2.5째C."""
     def task(self):
         self.TL2()
 

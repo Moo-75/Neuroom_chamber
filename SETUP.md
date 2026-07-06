@@ -81,11 +81,17 @@ sudo reboot
 - `maintemp.py` now saves video as `Video_{mouse_id}_{session}_{timestamp}.mp4`.
 - `task_temp.py` opens the USB camera through V4L2 on Raspberry Pi/Linux to avoid intermittent OpenCV GStreamer capture read failures.
 - H.264/GStreamer MP4 is preferred. If that writer is unavailable, OpenCV `mp4v` MP4 is used.
+- The video no longer writes a per-frame timestamp CSV; the timestamp and current temperature remain overlaid in the MP4.
 - Transient `cap.read()` failures are retried. Repeated unrecoverable camera failures stop video recording only; the behavioral task continues.
 - Useful checks on the Raspberry Pi:
   - `gst-inspect-1.0 x264enc`
   - `v4l2-ctl --list-formats-ext`
   - `ffprobe Video_*.mp4`
+
+## Sampling Notes
+
+- `SensorTime_*.csv` is written every 100 ms.
+- Behavioral sensor polling loops wait 50 ms between checks.
 
 스크립트가 처리하는 것:
 

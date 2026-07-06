@@ -12,6 +12,8 @@ import maze
 from task_temp import *
 import time
 
+SENSOR_LOG_INTERVAL_MS = 100
+
 #dir_ = os.getcwd()
 
 def attenuation_func(temp):
@@ -36,7 +38,7 @@ def sensor_worker(start_time, sensor_file_name, stop_event, json_dir):
 
     while not stop_event.is_set():
         wr.writerow([time.time() - start_time, *sensor.get()])
-        pygame.time.wait(10)
+        pygame.time.wait(SENSOR_LOG_INTERVAL_MS)
 
     return
 
@@ -166,7 +168,7 @@ def check_starting(experiment_start, csv_write_dir, mouse_id, session):
     Video_file_name        = os.path.join(csv_write_dir, f"Video_{mouse_id}_{session}_{experiment_time_str}.mp4")
     TrialData_file_name    = os.path.join(csv_write_dir, f"TD_{mouse_id}_{session}_{experiment_time_str}")
     Temperature_file_name  = os.path.join(csv_write_dir, f"Temperature_{mouse_id}_{session}_{experiment_time_str}.csv")
-    FrameTime_file_name    = os.path.join(csv_write_dir, f"FrameTime_{mouse_id}_{session}_{experiment_time_str}.csv")
+    FrameTime_file_name    = None
     SensorTime_file_name   = os.path.join(csv_write_dir, f"SensorTime_{mouse_id}_{session}_{experiment_time_str}.csv")
     return Temperature_file_name, Video_file_name, FrameTime_file_name, TrialData_file_name, SensorTime_file_name
     
