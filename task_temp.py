@@ -2749,7 +2749,7 @@ class Task:
                     blink_on = True if blink_on is None else (not blink_on)
                     last_blink = now
                     if blink_on:
-                        self.screen.display_temp_cue("cold")  # 왼쪽 위치 cue (cosmetic)
+                        self.screen.display_temp_cue("cold", bottom_gap_fraction=0.2)
                     else:
                         self.screen.show()
 

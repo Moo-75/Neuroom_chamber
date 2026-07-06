@@ -36,6 +36,7 @@ class Display:
             pygame.image.load(os.path.join(img_dir, 'Cold.png')), (200, 200))
         self._img_center = pygame.transform.scale(
             pygame.image.load(os.path.join(img_dir, 'Center.png')), (200, 200))
+        self._cue_y_cache = {}
 
     
     def show(self, state = []):
@@ -203,17 +204,50 @@ class Display:
             
         pygame.display.update()
         
-    def display_temp_cue(self, temp):
+    def _white_content_bottom(self, surface):
+        bottom = None
+        for y in range(surface.get_height()):
+            for x in range(surface.get_width()):
+                color = surface.get_at((x, y))
+                if color.a > 10 and color.r >= 240 and color.g >= 240 and color.b >= 240:
+                    bottom = y
+        return bottom if bottom is not None else surface.get_height() - 1
+
+    def _image_y_for_bottom_gap_fraction(self, surface, gap_fraction):
+        cache_key = (id(surface), gap_fraction)
+        if cache_key in self._cue_y_cache:
+            return self._cue_y_cache[cache_key]
+        screen_h = self.screen.get_height()
+        centered_y = (screen_h - surface.get_height()) // 2
+        content_bottom = self._white_content_bottom(surface)
+        current_gap = screen_h - (centered_y + content_bottom + 1)
+        target_gap = max(0, round(current_gap * gap_fraction))
+        image_y = screen_h - target_gap - (content_bottom + 1)
+        max_y = max(0, screen_h - surface.get_height())
+        image_y = max(0, min(image_y, max_y))
+        self._cue_y_cache[cache_key] = image_y
+        return image_y
+
+    def display_temp_cue(self, temp, bottom_gap_fraction=None):
         # Calculate positions
         third_width = 800 // 3
         cold_x = (third_width - 200) // 2
         hot_x = 2 * third_width + (third_width - 200) // 2
-        image_y = (480 - 200) // 2  # Vertically center
 
         self.screen.fill((0, 0, 0))
         if temp == "hot":
+            image_y = (
+                self._image_y_for_bottom_gap_fraction(self._img_hot, bottom_gap_fraction)
+                if bottom_gap_fraction is not None
+                else (480 - 200) // 2
+            )
             self.screen.blit(self._img_hot, (hot_x, image_y))
         elif temp == "cold":
+            image_y = (
+                self._image_y_for_bottom_gap_fraction(self._img_cold, bottom_gap_fraction)
+                if bottom_gap_fraction is not None
+                else (480 - 200) // 2
+            )
             self.screen.blit(self._img_cold, (cold_x, image_y))
         pygame.display.flip()
 
