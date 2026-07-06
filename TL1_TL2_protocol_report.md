@@ -183,9 +183,10 @@ sensor_right
 
 If camera initialization succeeds:
 
-- Video is saved to `Video_{mouse_id}_{session}_{timestamp}.avi`.
+- Video is saved to `Video_{mouse_id}_{session}_{timestamp}.mp4`.
 - Frame timestamps are saved to `FrameTime_{mouse_id}_{session}_{timestamp}.csv`.
 - Each frame has session time and current average temperature overlaid.
+- H.264/GStreamer MP4 is preferred; if unavailable, OpenCV `mp4v` MP4 is used. Transient USB camera read failures are retried and do not stop the behavioral task.
 
 ## 8. Analysis Notes
 

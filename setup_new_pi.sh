@@ -38,7 +38,11 @@ echo "[1/8] 라이브러리 설치 ..."
 sudo apt update
 sudo apt install -y git python3-dev \
         python3-pygame python3-opencv \
-        python3-serial python3-pytz python3-numpy
+        python3-serial python3-pytz python3-numpy \
+        ffmpeg v4l-utils \
+        gstreamer1.0-tools gstreamer1.0-plugins-base \
+        gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
+        gstreamer1.0-plugins-ugly gstreamer1.0-libav
 
 # classic RPi.GPIO (rpi-lgpio 가 깔려 있으면 충돌하므로 먼저 제거)
 sudo apt remove -y python3-rpi-lgpio 2>/dev/null || true

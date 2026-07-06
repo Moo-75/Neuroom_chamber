@@ -74,9 +74,22 @@ chmod +x setup_new_pi.sh
 sudo reboot
 ```
 
+---
+
+## Video Recording Notes
+
+- `maintemp.py` now saves video as `Video_{mouse_id}_{session}_{timestamp}.mp4`.
+- `task_temp.py` opens the USB camera through V4L2 on Raspberry Pi/Linux to avoid intermittent OpenCV GStreamer capture read failures.
+- H.264/GStreamer MP4 is preferred. If that writer is unavailable, OpenCV `mp4v` MP4 is used.
+- Transient `cap.read()` failures are retried. Repeated unrecoverable camera failures stop video recording only; the behavioral task continues.
+- Useful checks on the Raspberry Pi:
+  - `gst-inspect-1.0 x264enc`
+  - `v4l2-ctl --list-formats-ext`
+  - `ffprobe Video_*.mp4`
+
 스크립트가 처리하는 것:
 
-1. **라이브러리**: `git python3-dev python3-pygame python3-opencv python3-serial python3-pytz python3-numpy` + **classic `RPi.GPIO`** (`pip3 install RPi.GPIO`, rpi-lgpio는 제거)
+1. **라이브러리**: `git python3-dev python3-pygame python3-opencv python3-serial python3-pytz python3-numpy ffmpeg v4l-utils gstreamer1.0-*` + **classic `RPi.GPIO`** (`pip3 install RPi.GPIO`, rpi-lgpio는 제거)
 2. **그룹 권한**: `gpio,dialout,video,i2c,spi,audio,input`
 3. **Arduino udev 규칙**(`/dev/arduino`, VID/PID 매칭) + ModemManager 무시 플래그
 4. **ModemManager 비활성화**
@@ -149,7 +162,7 @@ python3 maintemp.py
 | `pygame.error: x11 not available` | `SDL_VIDEODRIVER=x11`이 강제됐는데 X 없음 → `unset SDL_VIDEODRIVER` 후 `DISPLAY=:0`로 실행 |
 | `/dev/arduino` 안 생김 | `link_arduino.sh` 실행. 그래도 안 되면 `udevadm info -q property -n /dev/ttyACM0`로 VID/PID 확인 |
 | `RPi.GPIO` import/초기화 실패 | `pip3 install --upgrade RPi.GPIO --break-system-packages`. (Pi 4에서 보통 정상) |
-| 영상 녹화 코덱 경고/실패 | `task_temp.py`의 `fourcc ... 'DIVX'` → `'MJPG'`로 변경(출력 확장자도 맞춤) |
+| 영상 녹화 코덱 경고/실패 | `setup_new_pi.sh`로 `ffmpeg`, `v4l-utils`, GStreamer H.264 패키지를 설치. `task_temp.py`는 H.264 MP4를 우선 사용하고 실패 시 `mp4v` MP4로 폴백한다. 반복적인 카메라 읽기 실패는 영상 녹화만 중단하고 행동 과제는 계속 진행한다. |
 | 시리얼 권한 거부 | dialout 그룹 적용 위해 재부팅했는지 `groups`로 확인 |
 | `./setup_new_pi.sh: bad interpreter` | CRLF 줄바꿈 → `sed -i 's/\r$//' setup_new_pi.sh` |
 

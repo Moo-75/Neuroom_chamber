@@ -163,7 +163,7 @@ def check_starting(experiment_start, csv_write_dir, mouse_id, session):
         raise ValueError(f"Experiment not confirmed (got '{experiment_start}'). Enter 'y' to start.")
     experiment_time = datetime.now(timezone('Asia/Seoul'))
     experiment_time_str = experiment_time.strftime("%Y-%m-%d_%H-%M-%S")
-    Video_file_name        = os.path.join(csv_write_dir, f"Video_{mouse_id}_{session}_{experiment_time_str}.avi")
+    Video_file_name        = os.path.join(csv_write_dir, f"Video_{mouse_id}_{session}_{experiment_time_str}.mp4")
     TrialData_file_name    = os.path.join(csv_write_dir, f"TD_{mouse_id}_{session}_{experiment_time_str}")
     Temperature_file_name  = os.path.join(csv_write_dir, f"Temperature_{mouse_id}_{session}_{experiment_time_str}.csv")
     FrameTime_file_name    = os.path.join(csv_write_dir, f"FrameTime_{mouse_id}_{session}_{experiment_time_str}.csv")

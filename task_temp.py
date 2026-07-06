@@ -14,6 +14,12 @@ import os
 import math
 import pygame
 
+CAMERA_INDEX = 0
+CAMERA_FPS = 10.0
+CAMERA_READ_RETRY_DELAY_SEC = 0.1
+CAMERA_REOPEN_AFTER_FAILURES = 10
+CAMERA_MAX_READ_FAILURES = 60
+
 # # maze에서 사용한 library를 다 써야하는게 아닌가? 
 # import pandas as pd
 # RPi.GPIO as GPIO
@@ -43,36 +49,173 @@ class Task:
 
         self.cap = None
         self.out = None
+        self.video_width = None
+        self.video_height = None
+        self.video_fps = CAMERA_FPS
+        self.video_writer_name = None
+        self.timestamp_file = FrameTime_file_name
+        self._init_video_recording(Video_file_name, FrameTime_file_name)
+
+    def _camera_backend(self):
+        if sys.platform.startswith("linux") and hasattr(cv2, "CAP_V4L2"):
+            return cv2.CAP_V4L2
+        return getattr(cv2, "CAP_ANY", 0)
+
+    def _open_camera(self):
+        backend = self._camera_backend()
+        if backend:
+            cap = cv2.VideoCapture(CAMERA_INDEX, backend)
+        else:
+            cap = cv2.VideoCapture(CAMERA_INDEX)
+        if not cap.isOpened():
+            cap.release()
+            return None, None, None, None
+
+        if hasattr(cv2, "CAP_PROP_FOURCC"):
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        cap.set(cv2.CAP_PROP_FPS, CAMERA_FPS)
+        if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+        fps = CAMERA_FPS
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        if width <= 0 or height <= 0:
+            for _ in range(5):
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    height, width = frame.shape[:2]
+                    break
+                time.sleep(CAMERA_READ_RETRY_DELAY_SEC)
+
+        if width <= 0 or height <= 0:
+            cap.release()
+            return None, None, None, None
+
+        return cap, width, height, fps
+
+    def _gst_safe_path(self, path):
+        return os.path.abspath(path).replace("\\", "\\\\").replace('"', '\\"')
+
+    def _ensure_parent_dir(self, path):
+        parent_dir = os.path.dirname(path)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+
+    def _open_video_writer(self, video_file_name, fps, width, height):
+        self._ensure_parent_dir(video_file_name)
+        bitrate_kbps = max(2000, min(8000, int(width * height * fps * 0.00025)))
+
+        if sys.platform.startswith("linux") and hasattr(cv2, "CAP_GSTREAMER"):
+            fps_num = max(1, int(round(fps)))
+            pipeline = (
+                "appsrc is-live=true format=time ! "
+                f"video/x-raw,format=BGR,width={width},height={height},framerate={fps_num}/1 ! "
+                "videoconvert ! video/x-raw,format=I420 ! "
+                f"x264enc speed-preset=veryfast tune=zerolatency bitrate={bitrate_kbps} key-int-max={int(fps * 2)} ! "
+                "h264parse config-interval=-1 ! mp4mux ! "
+                f'filesink location="{self._gst_safe_path(video_file_name)}"'
+            )
+            writer = cv2.VideoWriter(pipeline, cv2.CAP_GSTREAMER, 0, fps, (width, height), True)
+            if writer.isOpened():
+                return writer, f"H.264/GStreamer ({bitrate_kbps} kbps)"
+            writer.release()
+
+        writer = cv2.VideoWriter(
+            video_file_name,
+            cv2.VideoWriter_fourcc(*"mp4v"),
+            fps,
+            (width, height),
+        )
+        if writer.isOpened():
+            return writer, "mp4v/OpenCV"
+        writer.release()
+        return None, None
+
+    def _init_video_recording(self, video_file_name, frame_time_file_name):
         try:
             print("connecting camera")
-            self.cap = cv2.VideoCapture(0)
-            self.cap.set(cv2.CAP_PROP_FPS, 10)
+            self.cap, self.video_width, self.video_height, self.video_fps = self._open_camera()
+            if self.cap is None:
+                print("[Camera] camera open failed; task will continue without video recording.")
+                return
 
-            width = int(self.cap.get(3))
-            height = int(self.cap.get(4))
-            fourcc = cv2.VideoWriter_fourcc(*'DIVX')
-            fps = self.cap.get(cv2.CAP_PROP_FPS)  # Set the desired FPS
-            self.out = cv2.VideoWriter(Video_file_name, fourcc, fps, (width, height))
+            self.out, self.video_writer_name = self._open_video_writer(
+                video_file_name,
+                self.video_fps,
+                self.video_width,
+                self.video_height,
+            )
+            if self.out is None:
+                print("[Camera] MP4 writer open failed; task will continue without video recording.")
+                self.cap.release()
+                self.cap = None
+                return
 
-            # Create the timestamp file and write the header
-            self.timestamp_file = FrameTime_file_name
-            os.makedirs(os.path.dirname(self.timestamp_file), exist_ok=True)
-            with open(self.timestamp_file, 'w', newline='') as file:
+            self._ensure_parent_dir(frame_time_file_name)
+            with open(frame_time_file_name, 'w', newline='') as file:
                 writer = csv.writer(file)
                 writer.writerow(['Frame', 'Timestamp'])
-        except:
-            print("camera connecting failed")
+            print(
+                f"[Camera] recording {self.video_width}x{self.video_height} "
+                f"@ {self.video_fps:.2f} fps to MP4 via {self.video_writer_name}"
+            )
+        except Exception as e:
+            print(f"[Camera] initialization failed: {e}; task will continue without video recording.")
+            if self.cap is not None:
+                self.cap.release()
+            if self.out is not None:
+                self.out.release()
+            self.cap = None
+            self.out = None
+
+    def _reopen_camera(self):
+        if self.cap is not None:
+            self.cap.release()
+            self.cap = None
+        time.sleep(0.5)
+        cap, width, height, fps = self._open_camera()
+        if cap is None:
+            return False
+        self.cap = cap
+        print(f"[Camera] reopened camera at {width}x{height} @ {fps:.2f} fps")
+        return True
+
     def viedeo_record(self, *args):
-        if self.cap is None:
+        if self.cap is None or self.out is None:
             return
         frame_count = 0
         curr_temp = 0.0
+        consecutive_failures = 0
+        warned_resize = False
 
         while True:
-            ret, frame = self.cap.read()
-            if not ret:
-                print("Error on reading video")
+            if args and args[0]():
                 break
+            ret, frame = self.cap.read()
+            if not ret or frame is None:
+                consecutive_failures += 1
+                if consecutive_failures == 1 or consecutive_failures % 10 == 0:
+                    print(f"[Camera] frame read failed ({consecutive_failures} consecutive); retrying.")
+                if consecutive_failures % CAMERA_REOPEN_AFTER_FAILURES == 0:
+                    if not self._reopen_camera():
+                        print("[Camera] camera reopen failed; continuing short retries.")
+                if consecutive_failures >= CAMERA_MAX_READ_FAILURES:
+                    print("[Camera] stopping video recording after repeated frame read failures; task continues.")
+                    break
+                time.sleep(CAMERA_READ_RETRY_DELAY_SEC)
+                continue
+            consecutive_failures = 0
+
+            if frame.shape[1] != self.video_width or frame.shape[0] != self.video_height:
+                if not warned_resize:
+                    print(
+                        "[Camera] frame size changed; resizing frames to the "
+                        "initial video size for a valid MP4 stream."
+                    )
+                    warned_resize = True
+                frame = cv2.resize(frame, (self.video_width, self.video_height), interpolation=cv2.INTER_AREA)
 
             if frame_count % 5 == 0:
                 with self.dict_lock:
@@ -87,17 +230,19 @@ class Task:
             # Add the formatted timestamp to the frame
             cv2.putText(frame, timestamp_str, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
             cv2.putText(frame, f"{curr_temp:.3f}", (1000, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-            
+
+            try:
+                self.out.write(frame)
+            except Exception as e:
+                print(f"[Camera] video write failed: {e}; stopping video recording only.")
+                break
+
             # Write the timestamp and frame count to the CSV file
             with open(self.timestamp_file, 'a', newline='') as file:
                 writer = csv.writer(file)
                 writer.writerow([frame_count, f"{unix_timestamp:.3f}"])
             
             frame_count += 1
-            
-            self.out.write(frame)
-            if args[0]():
-                break
     def task(self):
         pass
 
