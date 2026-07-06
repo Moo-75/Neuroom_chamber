@@ -1,4 +1,4 @@
-
+# -*- coding: utf-8 -*-
 import maze
 import time
 import json
@@ -247,7 +247,7 @@ class Task:
             target_s = f"{target_temp:.2f}" if target_temp is not None else "n/a"
             msg = (
                 f"[TEMP] t={elapsed_min:.1f}min  "
-                f"avg={curr_s}째C  target={target_s}째C"
+                f"avg={curr_s}°C  target={target_s}°C"
             )
             sys.stdout.write("\r" + msg.ljust(pad))
             sys.stdout.flush()
@@ -1347,7 +1347,7 @@ class Task:
         start_Ex = time.time()
 
         # 珥덇린 ?⑤룄 ?꾨떖 ?湲?
-        print(f"Waiting for initial temperature: {target_temp}째C")
+        print(f"Waiting for initial temperature: {target_temp}°C")
         while True:
             current_state, attenuation_sign, state_switched, _ = self._maybe_switch_ns_attenuation_state(
                 start_Ex, current_state, attenuation_sign, state_switch_after_sec,
@@ -1380,10 +1380,10 @@ class Task:
             if optimal_reached_time is None:
                 if is_start_cold and curr_temp >= optimal_threshold:
                     optimal_reached_time = time.time()
-                    print(f"!!! Optimal temperature ({optimal_threshold}째C) reached! Session will end in {post_reach_duration} min. !!!")
+                    print(f"!!! Optimal temperature ({optimal_threshold}°C) reached! Session will end in {post_reach_duration} min. !!!")
                 elif not is_start_cold and curr_temp <= optimal_threshold:
                     optimal_reached_time = time.time()
-                    print(f"!!! Optimal temperature ({optimal_threshold}째C) reached! Session will end in {post_reach_duration} min. !!!")
+                    print(f"!!! Optimal temperature ({optimal_threshold}°C) reached! Session will end in {post_reach_duration} min. !!!")
 
             if optimal_reached_time is not None:
                 passed_time = time.time() - optimal_reached_time
@@ -1422,7 +1422,7 @@ class Task:
             # 3. Choice 泥섎━ + Outcome Phase
             if poke_pos == 'l':  # Left = Hot
                 # Choice: LEFT (Hot)
-                print(f"Choice: LEFT (Hot) +{temp_change}째C")
+                print(f"Choice: LEFT (Hot) +{temp_change}°C")
                 if target_temp >= choice_max:
                     new_target = target_temp
                 else:
@@ -1445,7 +1445,7 @@ class Task:
 
             elif poke_pos == 'r':  # Right = Cool
                 # Choice: RIGHT (Cool)
-                print(f"Choice: RIGHT (Cool) -{temp_change}째C")
+                print(f"Choice: RIGHT (Cool) -{temp_change}°C")
                 if target_temp <= choice_min:
                     new_target = target_temp
                 else:
@@ -1488,7 +1488,7 @@ class Task:
 
             # Optimal ?꾨떖 泥댄겕 (?ш린?쒕룄 ??踰???濡쒓렇 李띿뼱以?
             if optimal_min <= curr_temp <= optimal_max:
-                print(f"Current temp {curr_temp:.1f}째C is in optimal range!")
+                print(f"Current temp {curr_temp:.1f}°C is in optimal range!")
 
         # ?몄뀡 醫낅즺
         dt_row = [self.mouseid, self.day, self.trainingstep, trial,
@@ -1508,7 +1508,7 @@ class Task:
         """
         Stage 2: Attenuation + State Introduction
         - 紐⑺몴: Attenuation怨?State 媛쒕뀗 ?숈뒿
-        - Attenuation: ON (0.02째C/珥?
+        - Attenuation: ON (0.02°C/珥?
         - State: ?덉쓬 (?붾㈃ cue ?쒓났)
         - Attenuation? no choice 諛쒖깮 ?쒖젏遺???ㅼ쓬 choice源뚯? 吏???곸슜
         """
@@ -1547,7 +1547,7 @@ class Task:
         start_Ex = time.time()
 
         # 珥덇린 ?⑤룄 ?꾨떖 ?湲?
-        print(f"Waiting for initial temperature: {target_temp}째C")
+        print(f"Waiting for initial temperature: {target_temp}°C")
         reached_target, curr_temp = self._wait_for_target_temperature(
             target_temp, tolerance=1.0, timeout_sec=300, poll_ms=500
         )
@@ -1611,7 +1611,7 @@ class Task:
             # 3. Choice 泥섎━ + Outcome Phase
             if poke_pos == 'l':  # Left = Hot
                 # Choice: LEFT (Hot)
-                print(f"Choice: LEFT (Hot) +{temp_change}째C")
+                print(f"Choice: LEFT (Hot) +{temp_change}°C")
                 if target_temp >= choice_max:
                     new_target = target_temp
                 else:
@@ -1645,7 +1645,7 @@ class Task:
 
             elif poke_pos == 'r':  # Right = Cool
                 # Choice: RIGHT (Cool)
-                print(f"Choice: RIGHT (Cool) -{temp_change}째C")
+                print(f"Choice: RIGHT (Cool) -{temp_change}°C")
                 if target_temp <= choice_min:
                     new_target = target_temp
                 else:
@@ -1721,7 +1721,7 @@ class Task:
         """
         Stage 3: Full Task - No State Cue
         - 紐⑺몴: State cue ?놁씠 Full task ?섑뻾
-        - Attenuation: ON (0.03째C/珥?
+        - Attenuation: ON (0.03°C/珥?
         - State: ?덉쓬 (cue ?놁쓬 - 留덉슦?ㅺ? 異붾줎)
         """
         print("=== Training Stage 3: Full Task (No State Cue) ===")
@@ -1758,7 +1758,7 @@ class Task:
         start_Ex = time.time()
 
         # 珥덇린 ?⑤룄 ?꾨떖 ?湲?
-        print(f"Waiting for initial temperature: {target_temp}째C")
+        print(f"Waiting for initial temperature: {target_temp}°C")
         while True:
             with self.dict_lock:
                 curr_temp = self.shared_data["average_temp"]
@@ -1820,7 +1820,7 @@ class Task:
             # 3. Choice 泥섎━ + Outcome Phase
             if poke_pos == 'l':  # Left = Hot
                 # Choice: LEFT (Hot)
-                print(f"Choice: LEFT (Hot) +{temp_change}째C")
+                print(f"Choice: LEFT (Hot) +{temp_change}°C")
                 if target_temp >= choice_max:
                     new_target = target_temp
                 else:
@@ -1853,7 +1853,7 @@ class Task:
 
             elif poke_pos == 'r':  # Right = Cool
                 # Choice: RIGHT (Cool)
-                print(f"Choice: RIGHT (Cool) -{temp_change}째C")
+                print(f"Choice: RIGHT (Cool) -{temp_change}°C")
                 if target_temp <= choice_min:
                     new_target = target_temp
                 else:
@@ -1950,7 +1950,7 @@ class Task:
         attenuation_active = False
 
         # 珥덇린 ?⑤룄 ?꾨떖 ?湲?
-        print(f"Waiting for initial temperature: {target_temp}째C")
+        print(f"Waiting for initial temperature: {target_temp}°C")
         while True:
             with self.dict_lock:
                 curr_temp = self.shared_data["average_temp"]
@@ -1966,7 +1966,7 @@ class Task:
                   time.time() - self.start_time, "SessionStart", curr_temp, target_temp, 'n', current_state]
         self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-        print(f"State: {current_state}, Attenuation: {attenuation_rate * attenuation_sign:+.4f}째C/s")
+        print(f"State: {current_state}, Attenuation: {attenuation_rate * attenuation_sign:+.4f}°C/s")
 
         att_resume_time = 0.0  # attenuation ?ы솢?깊솕 ?덉빟 ?쒓컖 (0.0 = 利됱떆 媛??
 
@@ -1999,7 +1999,7 @@ class Task:
                       cue_time, "CueOn", curr_temp, target_temp, cue_type, current_state]
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-            print(f"  Cue: {cue_type.upper()} | Temp: {curr_temp:.1f}째C | Waiting center poke...")
+            print(f"  Cue: {cue_type.upper()} | Temp: {curr_temp:.1f}°C | Waiting center poke...")
 
             # Center poke ?湲?
             choice_tuple = [0, 0, 0, 0]
@@ -2069,7 +2069,7 @@ class Task:
                       poke_time, "CenterPoke", curr_temp, new_target, cue_type, current_state]
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-            print(f"  Temp change: {curr_temp:.1f} -> {new_target:.1f}째C")
+            print(f"  Temp change: {curr_temp:.1f} -> {new_target:.1f}°C")
 
             # ???붾㈃ (?⑤룄 蹂??以??湲?
             self.screen.show(state=["w"])
@@ -2120,9 +2120,9 @@ class Task:
         TRL1: Center-only reversal. Attenuation off until first center poke.
 
         Each poke: (1) 蹂댁긽 ?????붾㈃ ON ???쇳꽣 ?ы겕 遺덇?(?湲?猷⑦봽 諛?,
-        (2) drift OFF + 紐낅졊 紐⑺몴 짹bump_deg,
+        (2) drift OFF + 紐낅졊 紐⑺몴 ±bump_deg,
         (3) ?ㅼ륫??踰뷀봽 紐⑺몴 ?꾨떖 ?????붾㈃ OFF ???ы겕 媛??
-        (4) attenuation_rate (째C/s) ?쒕━?꾪듃 ON.
+        (4) attenuation_rate (°C/s) ?쒕━?꾪듃 ON.
 
         white_sec ?몄옄???섏쐞 ?명솚??誘몄궗??. ???붾㈃ 湲몄씠??踰뷀봽 紐⑺몴 ?꾨떖源뚯?.
         Preview cue: hot = next heating bump, cold = next cooling bump.
@@ -2183,7 +2183,7 @@ class Task:
             if curr_temp is None:
                 curr_temp = target_temp if target_temp is not None else start_temp
             # 踰뷀봽??諛섎뱶??"?꾩옱 紐낅졊 紐⑺몴" 湲곗?(?쒕━?꾪듃 以?紐⑺몴媛 梨붾쾭蹂대떎 ?욎꽌 ?덉쓣 ??
-            # ?ㅼ륫留??곕㈃ ???ы겕???섏떗 째C 紐⑺몴 ?먰봽媛 ?????덉쓬 ??batch6 TRL1 濡쒓렇?먯꽌 ?뺤씤??
+            # ?ㅼ륫留??곕㈃ ???ы겕???섏떗 °C 紐⑺몴 ?먰봽媛 ?????덉쓬 ??batch6 TRL1 濡쒓렇?먯꽌 ?뺤씤??
             ref = target_temp
             if ref is None or not math.isfinite(ref):
                 ref = curr_temp
@@ -2206,7 +2206,7 @@ class Task:
 
             print(
                 f"[TRL1] Poke #{poke_count} ({new_mode}): "
-                f"cmd_ref={ref:.3f}째C, avg_now={curr_temp:.3f}째C ??bump_target={new_target:.3f}째C"
+                f"cmd_ref={ref:.3f}°C, avg_now={curr_temp:.3f}°C -> bump_target={new_target:.3f}°C"
             )
 
             # 踰뷀봽 ?쒖옉: ???붾㈃ + ??援ш컙?먯꽌???ы겕 ?湲?猷⑦봽???놁뼱 ?곗냽 ?ы겕 遺덇?
@@ -2236,8 +2236,8 @@ class Task:
                 last_s = "n/a"
             print(
                 f"[TRL1] Bump arrival: {'OK' if ok_bump else 'TIMEOUT'}, "
-                f"last_avg={last_s}째C, bump_target={new_target:.3f}째C "
-                f"(tol 짹{bump_arrival_tolerance}째C)"
+                f"last_avg={last_s}°C, bump_target={new_target:.3f}°C "
+                f"(tol ±{bump_arrival_tolerance}°C)"
             )
             if not ok_bump:
                 print(
@@ -2269,7 +2269,7 @@ class Task:
         """
         TRL2: 諛⑺뼢 ?숈뒿. left = cold choice(媛먯뇿 ?됯컖), right = hot choice(媛먯뇿 媛??.
         ???쒖젏?먮뒗 ?쒖そ留????쒖떆(hot?봠old 踰덇컝??. 鍮꾪솢??援щ찉 poke??臾댁떆.
-        ?щ컮瑜?poke ???고솕硫?+ 媛먯뇿 ?뺤? ??짹bump_deg ???고솕硫??댁젣 ??
+        ?щ컮瑜?poke ???고솕硫?+ 媛먯뇿 ?뺤? ??±bump_deg ???고솕硫??댁젣 ??
         ?ㅼ쓬 ?먮줈 ?꾪솚?섍퀬, hot ?꾨즺 ?꾩뿉??+rate ?됯컖 ??醫?, cold ?꾨즺 ?꾩뿉??-rate 媛??????.
         """
         print("=== TRL2: Side alternating hot/cold cue ===")
@@ -2357,8 +2357,8 @@ class Task:
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
             print(
-                f"[TRL2] trial {trial} ({active_cue}): ref={ref:.3f}째C ??bump_target={new_target:.3f}째C, "
-                f"next drift={'+' if att_sign_after > 0 else '-'}{attenuation_rate}째C/s"
+                f"[TRL2] trial {trial} ({active_cue}): ref={ref:.3f}°C -> bump_target={new_target:.3f}°C, "
+                f"next drift={'+' if att_sign_after > 0 else '-'}{attenuation_rate}°C/s"
             )
 
             self.screen.show(state=["w"])
@@ -2544,7 +2544,7 @@ class Task:
 
             print(
                 f"[TRL3] trial {trial} layout={cue_layout} choice={choice}, att_sign before={_trl3_att_label(att_sign)}, "
-                f"ref={ref:.3f}째C ??bump_target={new_target:.3f}째C (clamped to [{temp_min}, {temp_max}])"
+                f"ref={ref:.3f}°C -> bump_target={new_target:.3f}°C (clamped to [{temp_min}, {temp_max}])"
             )
 
             self.screen.show(state=["w"])
@@ -2602,7 +2602,7 @@ class Task:
                  bump_arrival_tolerance=1.0, bump_arrival_timeout_sec=180.0):
         """
         TRL_main: TRL2? ?숈씪?섍쾶 ?쒖옉 ??媛먯뇿 0, 醫?cold쨌??hot ?숈떆 ?쒖떆(??긽).
-        踰뷀봽 紐⑺몴: ref짹bump_deg ??[temp_min, temp_max]濡??대옩??hot ?곹븳쨌cold ?섑븳 ?숈씪 洹쒖튃).
+        踰뷀봽 紐⑺몴: ref±bump_deg ??[temp_min, temp_max]濡??대옩??hot ?곹븳쨌cold ?섑븳 ?숈씪 洹쒖튃).
         踰뷀봽 ??媛먯뇿 諛⑺뼢: choice_sign( hot=+1, cold=-1 )? att_sign??媛숈쑝硫??좎?, ?ㅻⅤ硫?att_sign=choice_sign.
         """
         print("=== TRL_main: Both cues from start (att off); hot/cold bump + directional att ===")
@@ -2689,7 +2689,7 @@ class Task:
 
             print(
                 f"[TRL_main] trial {trial} choice={choice}, att_sign before={_trl3_att_label(att_sign)}, "
-                f"ref={ref:.3f}째C ??bump_target={new_target:.3f}째C (clamped to [{temp_min}, {temp_max}])"
+                f"ref={ref:.3f}°C -> bump_target={new_target:.3f}°C (clamped to [{temp_min}, {temp_max}])"
             )
 
             self.screen.show(state=["w"])
@@ -2822,13 +2822,13 @@ class Task:
             if shared_start_temp < temp_min or shared_start_temp > temp_max:
                 clamped_start = max(temp_min, min(shared_start_temp, temp_max))
                 print(
-                    f"[TL] initial target {shared_start_temp}째C is outside "
-                    f"{temp_min}-{temp_max}째C; clamped to {clamped_start}째C"
+                    f"[TL] initial target {shared_start_temp}°C is outside "
+                    f"{temp_min}-{temp_max}°C; clamped to {clamped_start}°C"
                 )
                 start_temp = clamped_start
             else:
                 start_temp = shared_start_temp
-            print(f"[TL] using maintemp set-on target as start_temp: {start_temp}째C")
+            print(f"[TL] using maintemp set-on target as start_temp: {start_temp}°C")
 
         self.peltier_queue.put(("SET_TEMP", start_temp))
         self.peltier_queue.put(("SET_ATTENUATION_DIRECT", (0.0, temp_min, temp_max)))
@@ -2916,8 +2916,8 @@ class Task:
                 outcome_delta = bump
                 outcome_target = new_target
 
-                print(f"[TL] trial {trial}: LeftPoke, target={base_temp:.3f}째C + bump {bump} "
-                      f"??target {new_target:.3f}째C (RT={rt}s)")
+                print(f"[TL] trial {trial}: LeftPoke, target={base_temp:.3f}°C + bump {bump} "
+                      f"-> target {new_target:.3f}°C (RT={rt}s)")
                 dt_row = [self.mouseid, self.day, self.trainingstep, trial,
                           poke_t, "LeftPoke", curr_temp, new_target, 'l', bump, rt,
                           outcome_delta, outcome_target]
@@ -3018,7 +3018,7 @@ class Task:
         start_Ex = time.time()
         attenuation_active = False
 
-        print(f"Waiting for initial temperature: {target_temp}째C")
+        print(f"Waiting for initial temperature: {target_temp}°C")
         while True:
             current_state, attenuation_sign, state_switched, _switched = self._maybe_switch_ns_attenuation_state(
                 start_Ex, current_state, attenuation_sign, state_switch_after_sec,
@@ -3115,7 +3115,7 @@ class Task:
                       center_poke_time, "CenterPoke", curr_temp, target_temp, cue_type, 'm', current_state, 'n']
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-            print(f"Trial {trial} | Temp: {curr_temp:.1f}째C | Cue: {cue_type.upper()} at {correct_side}")
+            print(f"Trial {trial} | Temp: {curr_temp:.1f}°C | Cue: {cue_type.upper()} at {correct_side}")
 
             # Side poke ?湲?(timeout: choice_timeout 珥?
             side_choice_start = time.time()
@@ -3195,7 +3195,7 @@ class Task:
                 continue
 
             # ?뺣떟 泥섎━
-            print(f"  Correct poke: {poke_pos} | Temp: {curr_temp:.1f} -> {new_target:.1f}째C")
+            print(f"  Correct poke: {poke_pos} | Temp: {curr_temp:.1f} -> {new_target:.1f}°C")
             self.reward.give(0.1)
             self.peltier_queue.put(("SET_ATTENUATION_DIRECT", 0))
             attenuation_active = False
@@ -3262,7 +3262,7 @@ class Task:
         start_Ex = time.time()
         attenuation_active = False
 
-        print(f"Waiting for initial temperature: {target_temp}째C")
+        print(f"Waiting for initial temperature: {target_temp}°C")
         while True:
             current_state, attenuation_sign, state_switched, _switched = self._maybe_switch_ns_attenuation_state(
                 start_Ex, current_state, attenuation_sign, state_switch_after_sec,
@@ -3366,7 +3366,7 @@ class Task:
                       center_poke_time, "CenterPoke", curr_temp, target_temp, cue_type, 'm', current_state, trial_type, 'n']
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-            print(f"Trial {trial} | Temp: {curr_temp:.1f}째C | Type: {trial_type} | Correct: {correct_side}")
+            print(f"Trial {trial} | Temp: {curr_temp:.1f}°C | Type: {trial_type} | Correct: {correct_side}")
 
             # Side poke ?湲?
             side_choice_start = time.time()
@@ -3453,7 +3453,7 @@ class Task:
                 continue
 
             # ?⑤룄 蹂??泥섎━
-            print(f"  Poke: {poke_pos} | Result: {result} | Temp: {curr_temp:.1f} -> {new_target:.1f}째C")
+            print(f"  Poke: {poke_pos} | Result: {result} | Temp: {curr_temp:.1f} -> {new_target:.1f}°C")
             self.reward.give(0.1)
             self.peltier_queue.put(("SET_ATTENUATION_DIRECT", 0))
             attenuation_active = False
@@ -3520,7 +3520,7 @@ class Task:
         start_Ex = time.time()
         attenuation_active = False
 
-        print(f"Waiting for initial temperature: {target_temp}째C")
+        print(f"Waiting for initial temperature: {target_temp}°C")
         while True:
             current_state, attenuation_sign, state_switched, _switched = self._maybe_switch_ns_attenuation_state(
                 start_Ex, current_state, attenuation_sign, state_switch_after_sec,
@@ -3616,7 +3616,7 @@ class Task:
                       center_poke_time, "CenterPoke", curr_temp, target_temp, correct_side, 'm', current_state, 'n']
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-            print(f"Trial {trial} | Temp: {curr_temp:.1f}째C | Correct side: {correct_side} (both shown)")
+            print(f"Trial {trial} | Temp: {curr_temp:.1f}°C | Correct side: {correct_side} (both shown)")
 
             # Side poke ?湲?
             side_choice_start = time.time()
@@ -3686,7 +3686,7 @@ class Task:
                 self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
                 continue
 
-            print(f"  Poke: {poke_pos} | Result: {result} | Temp: {curr_temp:.1f} -> {new_target:.1f}째C")
+            print(f"  Poke: {poke_pos} | Result: {result} | Temp: {curr_temp:.1f} -> {new_target:.1f}°C")
             self.reward.give(0.1)
             self.peltier_queue.put(("SET_ATTENUATION_DIRECT", 0))
             attenuation_active = False
@@ -3776,27 +3776,27 @@ class POA_task(Task):
 # ============================================================
 
 class Training_Stage1_Cold(Task):
-    """Stage 1: ?쒖옉 ?⑤룄 23째C (李④???履쎌뿉???쒖옉)"""
+    """Stage 1: ?쒖옉 ?⑤룄 23°C (李④???履쎌뿉???쒖옉)"""
     def task(self):
         self.Training_Stage1(start_temp=20.0)
 
 class Training_Stage1_Hot(Task):
-    """Stage 1: ?쒖옉 ?⑤룄 37째C (?④굅??履쎌뿉???쒖옉)"""
+    """Stage 1: ?쒖옉 ?⑤룄 37°C (?④굅??履쎌뿉???쒖옉)"""
     def task(self):
         self.Training_Stage1(start_temp=40.0)
 
 class Training_Stage2_Cold(Task):
-    """Stage 2: ?쒖옉 ?⑤룄 25째C (optimal 寃쎄퀎 李④???履?"""
+    """Stage 2: ?쒖옉 ?⑤룄 25°C (optimal 寃쎄퀎 李④???履?"""
     def task(self):
         self.Training_Stage2(start_temp=20.0)
 
 class Training_Stage2_Hot(Task):
-    """Stage 2: ?쒖옉 ?⑤룄 35째C (optimal 寃쎄퀎 ?④굅??履?"""
+    """Stage 2: ?쒖옉 ?⑤룄 35°C (optimal 寃쎄퀎 ?④굅??履?"""
     def task(self):
         self.Training_Stage2(start_temp=40.0)
 
 class Training_Stage3_Full(Task):
-    """Stage 3: Full Task (?쒖옉 ?⑤룄 30째C, optimal 以묒븰)"""
+    """Stage 3: Full Task (?쒖옉 ?⑤룄 30°C, optimal 以묒븰)"""
     def task(self):
         self.Training_Stage3(start_temp=30.0)
 
@@ -3825,7 +3825,7 @@ class New_Stage4_Task(Task):
         self.New_Stage4()
 
 class TRL1_Task(Task):
-    """TRL1: Center-only; bump ??white until chamber reaches bump target ??drift 0.07째C/s."""
+    """TRL1: Center-only; bump ??white until chamber reaches bump target ??drift 0.07°C/s."""
     def task(self):
         self.TRL1()
 
@@ -3877,12 +3877,12 @@ class TRL_main_Task(Task):
         self.TRL_main()
 
 class TL1_Task(Task):
-    """TL1: left-only, choice ??+5째C, no-choice ??-5째C, 20s/40s window."""
+    """TL1: left-only, choice -> +5°C, no-choice ??-5°C, 20s/40s window."""
     def task(self):
         self.TL1()
 
 class TL2_Task(Task):
-    """TL2: left-only, choice ??+3/3.5/4째C, no-choice ??-1.5/-2/-2.5째C."""
+    """TL2: left-only, choice -> +3/3.5/4°C, no-choice ??-1.5/-2/-2.5°C."""
     def task(self):
         self.TL2()
 
