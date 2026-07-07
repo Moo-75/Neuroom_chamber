@@ -323,10 +323,10 @@ def copy_file_with_progress(src: Path, dst: Path, progress: ProgressBar) -> None
 
 def copy_to_share(args: argparse.Namespace, folder: ExperimentFolder) -> None:
     share_dir = Path(args.share_dir).expanduser()
-    if not share_dir.is_dir():
+    if not share_dir.is_dir() or not is_mountpoint(share_dir):
         raise SystemExit(
-            f"Share directory is not available: {share_dir}\n"
-            "Mount the PC shared folder on the Raspberry Pi first, or use --method ssh."
+            f"Share directory is not mounted: {share_dir}\n"
+            "Use --method smb to mount the PC share temporarily, or mount it manually first."
         )
 
     destination_root = share_dir / folder.path.name
@@ -345,7 +345,18 @@ def copy_to_share(args: argparse.Namespace, folder: ExperimentFolder) -> None:
 
 
 def is_mountpoint(path: Path) -> bool:
+    if shutil.which("mountpoint") is None:
+        return False
     return subprocess.run(["mountpoint", "-q", str(path)], text=True).returncode == 0
+
+
+def has_local_contents(path: Path) -> bool:
+    if not path.exists() or not path.is_dir():
+        return False
+    try:
+        return any(path.iterdir())
+    except OSError:
+        return False
 
 
 def get_smb_password(args: argparse.Namespace) -> str:
@@ -380,6 +391,14 @@ def mount_smb_share(args: argparse.Namespace) -> bool:
     if mountpoint.is_dir() and is_mountpoint(mountpoint):
         print(f"Using already mounted share: {mountpoint}")
         return False
+    if has_local_contents(mountpoint):
+        raise SystemExit(
+            f"{mountpoint} exists but is not mounted and already contains files.\n"
+            "Those files are on the Raspberry Pi, not on the PC share. Move them away first, for example:\n"
+            f"  sudo mv {mountpoint} {mountpoint}_local_copy\n"
+            f"  sudo mkdir -p {mountpoint}\n"
+            "Then run migrate_to.py again."
+        )
 
     if not any(Path(path).exists() for path in ("/sbin/mount.cifs", "/usr/sbin/mount.cifs")) and shutil.which("mount.cifs") is None:
         raise SystemExit("mount.cifs not found. On Raspberry Pi, install it with: sudo apt install cifs-utils")
@@ -427,7 +446,7 @@ def unmount_smb_share(args: argparse.Namespace) -> None:
 def select_method(args: argparse.Namespace) -> str:
     if args.method != "auto":
         return args.method
-    if Path(args.share_dir).expanduser().is_dir():
+    if is_mountpoint(Path(args.share_dir).expanduser()):
         return "share"
     return "smb"
 
