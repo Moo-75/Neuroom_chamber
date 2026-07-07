@@ -15,7 +15,7 @@ import math
 import pygame
 
 CAMERA_INDEX = 0
-CAMERA_FPS = 10.0
+CAMERA_FPS = 15.0
 CAMERA_READ_RETRY_DELAY_SEC = 0.1
 CAMERA_REOPEN_AFTER_FAILURES = 10
 CAMERA_MAX_READ_FAILURES = 60
@@ -186,54 +186,92 @@ class Task:
         consecutive_failures = 0
         warned_resize = False
 
-        while True:
-            if args and args[0]():
-                break
-            ret, frame = self.cap.read()
-            if not ret or frame is None:
-                consecutive_failures += 1
-                if consecutive_failures == 1 or consecutive_failures % 10 == 0:
-                    print(f"[Camera] frame read failed ({consecutive_failures} consecutive); retrying.")
-                if consecutive_failures % CAMERA_REOPEN_AFTER_FAILURES == 0:
-                    if not self._reopen_camera():
-                        print("[Camera] camera reopen failed; continuing short retries.")
-                if consecutive_failures >= CAMERA_MAX_READ_FAILURES:
-                    print("[Camera] stopping video recording after repeated frame read failures; task continues.")
+        # 온도 텍스트를 해상도에 맞춰 오른쪽에 배치 (화면 밖으로 나가는 것 방지)
+        temp_text_x = max(10, int(self.video_width) - 150) if self.video_width else 10
+
+        # 프레임 페이싱: 카메라가 video_fps보다 빠르게 프레임을 주더라도
+        # writer에 선언된 fps에 맞춰 기록해야 저장된 MP4가 실시간 속도로 재생된다.
+        frame_interval = 1.0 / self.video_fps if self.video_fps and self.video_fps > 0 else 0.0
+        next_write_time = time.time()
+
+        try:
+            while True:
+                if args and args[0]():
                     break
-                time.sleep(CAMERA_READ_RETRY_DELAY_SEC)
-                continue
-            consecutive_failures = 0
+                ret, frame = self.cap.read()
+                if not ret or frame is None:
+                    consecutive_failures += 1
+                    if consecutive_failures == 1 or consecutive_failures % 10 == 0:
+                        print(f"[Camera] frame read failed ({consecutive_failures} consecutive); retrying.")
+                    if consecutive_failures % CAMERA_REOPEN_AFTER_FAILURES == 0:
+                        if self._reopen_camera():
+                            # reopen 성공 시 카운터를 리셋해 재시도 기회를 회복한다.
+                            consecutive_failures = 0
+                            time.sleep(CAMERA_READ_RETRY_DELAY_SEC)
+                            continue
+                        print("[Camera] camera reopen failed; continuing short retries.")
+                    if consecutive_failures >= CAMERA_MAX_READ_FAILURES:
+                        print("[Camera] stopping video recording after repeated frame read failures; task continues.")
+                        break
+                    time.sleep(CAMERA_READ_RETRY_DELAY_SEC)
+                    continue
+                consecutive_failures = 0
 
-            if frame.shape[1] != self.video_width or frame.shape[0] != self.video_height:
-                if not warned_resize:
-                    print(
-                        "[Camera] frame size changed; resizing frames to the "
-                        "initial video size for a valid MP4 stream."
-                    )
-                    warned_resize = True
-                frame = cv2.resize(frame, (self.video_width, self.video_height), interpolation=cv2.INTER_AREA)
+                # 목표 fps보다 이르게 도착한 프레임은 버려 기록 속도를 일정하게 유지.
+                now = time.time()
+                if frame_interval:
+                    if now < next_write_time:
+                        continue
+                    next_write_time += frame_interval
+                    # 루프가 뒤처졌을 때 한꺼번에 몰아쓰지 않도록 스케줄을 재동기화.
+                    if now > next_write_time + frame_interval:
+                        next_write_time = now + frame_interval
 
-            if frame_count % 5 == 0:
-                with self.dict_lock:
-                    curr_temp = self.shared_data["average_temp"]
-                if curr_temp is None or not math.isfinite(curr_temp):
-                    curr_temp = float("nan")
+                if frame.shape[1] != self.video_width or frame.shape[0] != self.video_height:
+                    if not warned_resize:
+                        print(
+                            "[Camera] frame size changed; resizing frames to the "
+                            "initial video size for a valid MP4 stream."
+                        )
+                        warned_resize = True
+                    frame = cv2.resize(frame, (self.video_width, self.video_height), interpolation=cv2.INTER_AREA)
 
-            # Get the current Unix timestamp with decimal places
-            unix_timestamp = time.time() - self.start_time
-            # Format the Unix timestamp as a string with decimal places
-            timestamp_str = f"{unix_timestamp:.3f}"
-            # Add the formatted timestamp to the frame
-            cv2.putText(frame, timestamp_str, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-            cv2.putText(frame, f"{curr_temp:.3f}", (1000, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                if frame_count % 5 == 0:
+                    try:
+                        with self.dict_lock:
+                            curr_temp = self.shared_data["average_temp"]
+                    except Exception as e:
+                        print(f"[Camera] temperature read failed: {e}; keeping last known value.")
+                    if curr_temp is None or not math.isfinite(curr_temp):
+                        curr_temp = float("nan")
 
-            try:
-                self.out.write(frame)
-            except Exception as e:
-                print(f"[Camera] video write failed: {e}; stopping video recording only.")
-                break
+                # Get the current Unix timestamp with decimal places
+                unix_timestamp = time.time() - self.start_time
+                # Format the Unix timestamp as a string with decimal places
+                timestamp_str = f"{unix_timestamp:.3f}"
+                # Add the formatted timestamp to the frame
+                cv2.putText(frame, timestamp_str, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                cv2.putText(frame, f"{curr_temp:.3f}", (temp_text_x, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
-            frame_count += 1
+                try:
+                    self.out.write(frame)
+                except Exception as e:
+                    print(f"[Camera] video write failed: {e}; stopping video recording only.")
+                    break
+
+                frame_count += 1
+        except Exception as e:
+            print(f"[Camera] recording loop error: {e}; stopping video recording only.")
+        finally:
+            # 카메라/라이터 정리는 녹화 스레드가 직접 수행한다. 이렇게 하면 read()가
+            # 블로킹된 상태에서 다른 스레드가 release()를 호출해 크래시하는 것을 막는다.
+            if self.out is not None:
+                self.out.release()
+                self.out = None
+            if self.cap is not None:
+                self.cap.release()
+                self.cap = None
+
     def task(self):
         pass
 
@@ -278,11 +316,13 @@ class Task:
             thread_stop = True
             video_proc.join(timeout=5)
             if video_proc.is_alive():
-                print("[Warning] video_proc did not terminate cleanly after 5s.")
-            if self.cap is not None:
-                self.cap.release()
-            if self.out is not None:
-                self.out.release()
+                print(
+                    "[Warning] video_proc did not terminate cleanly after 5s; "
+                    "skipping camera/writer release to avoid a crash from releasing "
+                    "while a blocking read is still in progress."
+                )
+            # 정상 종료 시에는 viedeo_record의 finally 블록이 이미 카메라/라이터를
+            # 해제하므로 여기서 따로 release 하지 않는다.
 
     def _sanitize_temperature(self, value):
         if value is None:
@@ -2977,11 +3017,12 @@ class Task:
         self.stop_event.set()
         print("=== TL Session Ended ===")
 
-    def TL1(self):
-        print("=== TL1: Temperature lift (+5/-5 fixed) ===")
+    def TL1(self, choice_window=20.0):
+        print(f"=== TL1: Temperature lift (+5/-5 fixed, choice window {choice_window:g}s) ===")
         self._run_temperature_lift(
             bump_choices=(5.0,),
             no_choice_drop_choices=(5.0,),
+            choice_window=choice_window,
         )
 
     def TL2(self):
@@ -3877,9 +3918,40 @@ class TRL_main_Task(Task):
         self.TRL_main()
 
 class TL1_Task(Task):
-    """TL1: left-only, choice -> +5°C, no-choice ??-5°C, 20s/40s window."""
+    """TL1: left-only, configurable choice window, fixed +5/-5 outcome."""
+
+    def __init__(
+        self,
+        json_dir,
+        Video_file_name,
+        FrameTime_file_name,
+        TrialData_file_name,
+        mouseid,
+        session,
+        shared_data,
+        dict_lock,
+        start_time,
+        peltier_queue,
+        stop_event,
+        choice_window=20.0,
+    ):
+        self.choice_window = choice_window
+        super().__init__(
+            json_dir,
+            Video_file_name,
+            FrameTime_file_name,
+            TrialData_file_name,
+            mouseid,
+            session,
+            shared_data,
+            dict_lock,
+            start_time,
+            peltier_queue,
+            stop_event,
+        )
+
     def task(self):
-        self.TL1()
+        self.TL1(choice_window=self.choice_window)
 
 class TL2_Task(Task):
     """TL2: left-only, choice -> +3/3.5/4°C, no-choice ??-1.5/-2/-2.5°C."""

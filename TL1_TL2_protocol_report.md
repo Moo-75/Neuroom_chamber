@@ -15,7 +15,7 @@ TL1 and TL2 use the same event order but different window durations.
 | Phase | Duration | Description |
 |---|---:|---|
 | Trial start | immediate | Target temperature is held. A 0.1 s solenoid-valve sound cue is generated through `reward.give(trial_start_reward)`. |
-| Choice window | TL1: 20 s; TL2: 10 s | Left cue blinks near the lower-left area. Left poke is the only valid choice. Other pokes are ignored. |
+| Choice window | TL1: user-entered seconds, default 20 s; TL2: 10 s | Left cue blinks near the lower-left area. Left poke is the only valid choice. Other pokes are ignored. |
 | Feedback window | TL1: 40 s; TL2: 20 s | White screen is shown. Pokes are ignored. The selected outcome target is maintained. |
 | Trial end | immediate | `FeedbackEnd` is logged and the next trial starts if session time remains. |
 
