@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -35,8 +36,8 @@ import sys
 from pathlib import Path
 
 
-# NOTE: replace 'user' with your real server login (or pass --target / set
-# the CHAMBER_SERVER_TARGET environment variable).
+# Server login. 'user' is the actual account name on 10.140.5.118.
+# Override with --target or the CHAMBER_SERVER_TARGET environment variable.
 DEFAULT_TARGET = "user@10.140.5.118"
 DEFAULT_PORT = 6022
 DEFAULT_DEST = "/data/Siheon_chamber_data"
@@ -47,6 +48,10 @@ EXPERIMENT_PATTERNS = (
     "Video_*.mp4",
     "TD_*_trial-wise.csv",
 )
+
+# Set in main() when sshpass-based passwordless auth is enabled.
+_EXTRA_ENV: dict = {}
+_SSHPASS_PREFIX: list = []
 
 
 def shell_quote(value) -> str:
@@ -149,8 +154,32 @@ def discover_parents(bases: list[Path], max_depth: int) -> list[dict]:
     return sorted(parents.values(), key=lambda item: str(item["path"]).lower())
 
 
+def _control_opts() -> list[str]:
+    # Reuse one authenticated master connection for every ssh/scp/rsync in this
+    # run, so the password is asked at most once instead of once per command.
+    return [
+        "-o", "ControlMaster=auto",
+        "-o", "ControlPath=/tmp/migrate_ctl_%r@%h:%p",
+        "-o", "ControlPersist=120",
+    ]
+
+
+def _popen_env():
+    if _EXTRA_ENV:
+        env = dict(os.environ)
+        env.update(_EXTRA_ENV)
+        return env
+    return None
+
+
+def _wrap(cmd: list[str]) -> list[str]:
+    # Prepend sshpass (if enabled) so the whole ssh/scp/rsync command is fed the
+    # password non-interactively.
+    return [*_SSHPASS_PREFIX, *cmd]
+
+
 def ssh_base(args: argparse.Namespace) -> list[str]:
-    cmd = ["ssh", "-p", str(args.port)]
+    cmd = ["ssh", "-p", str(args.port), *_control_opts()]
     if args.identity_file:
         cmd += ["-i", args.identity_file]
     for option in args.ssh_option:
@@ -159,7 +188,7 @@ def ssh_base(args: argparse.Namespace) -> list[str]:
 
 
 def ssh_command_string(args: argparse.Namespace) -> str:
-    parts = ["ssh", "-p", str(args.port)]
+    parts = ["ssh", "-p", str(args.port), *_control_opts()]
     if args.identity_file:
         parts += ["-i", args.identity_file]
     for option in args.ssh_option:
@@ -169,17 +198,67 @@ def ssh_command_string(args: argparse.Namespace) -> str:
 
 def run_printed(cmd: list[str]) -> None:
     print("+ " + " ".join(shell_quote(part) for part in cmd))
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True, env=_popen_env())
 
 
 def remote_has_rsync(args: argparse.Namespace) -> bool:
-    cmd = [*ssh_base(args), args.target, "command -v rsync >/dev/null 2>&1"]
-    return subprocess.run(cmd).returncode == 0
+    cmd = _wrap([*ssh_base(args), args.target, "command -v rsync >/dev/null 2>&1"])
+    return subprocess.run(cmd, env=_popen_env()).returncode == 0
 
 
 def ensure_remote_dir(args: argparse.Namespace) -> None:
-    cmd = [*ssh_base(args), args.target, f"mkdir -p {shell_quote(args.dest)}"]
-    run_printed(cmd)
+    run_printed(_wrap([*ssh_base(args), args.target, f"mkdir -p {shell_quote(args.dest)}"]))
+
+
+# Matches the fields of an `rsync --info=progress2` line, e.g.
+#   722.08M  19%    8.88MB/s    0:05:33 (xfr#14, to-chk=18/39)
+_PROGRESS_RE = re.compile(r"(\d+)%\s+(\S+/s)\s+(\d+:\d\d:\d\d)")
+
+
+def run_rsync_with_bar(cmd: list[str]) -> None:
+    print("+ " + " ".join(shell_quote(part) for part in cmd))
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=_popen_env(),
+    )
+    width = 30
+    buffer = ""
+    bar_on_screen = False
+    try:
+        while True:
+            char = proc.stdout.read(1)
+            if not char:
+                break
+            if char in ("\r", "\n"):
+                line = buffer.strip()
+                buffer = ""
+                match = _PROGRESS_RE.search(line)
+                if match:
+                    pct = int(match.group(1))
+                    speed = match.group(2)
+                    eta = match.group(3)
+                    filled = int(width * pct / 100)
+                    bar = "#" * filled + "-" * (width - filled)
+                    sys.stdout.write(f"\rCopying: [{bar}] {pct:3d}%  {speed:>10}  ETA {eta}    ")
+                    sys.stdout.flush()
+                    bar_on_screen = True
+                elif line:
+                    if bar_on_screen:
+                        sys.stdout.write("\n")
+                        bar_on_screen = False
+                    print(line)
+            else:
+                buffer += char
+    finally:
+        proc.wait()
+    if bar_on_screen:
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, cmd)
 
 
 def transfer(args: argparse.Namespace, parent: Path) -> None:
@@ -188,7 +267,7 @@ def transfer(args: argparse.Namespace, parent: Path) -> None:
     remote_dest = f"{args.target}:{shell_quote(dest + '/')}"
 
     if shutil.which("rsync") and remote_has_rsync(args):
-        cmd = [
+        cmd = _wrap([
             "rsync",
             "-ah",
             "--info=progress2",
@@ -197,13 +276,13 @@ def transfer(args: argparse.Namespace, parent: Path) -> None:
             ssh_command_string(args),
             str(parent) + os.sep,   # trailing slash => copy the CONTENTS, not the folder
             remote_dest,
-        ]
-        run_printed(cmd)
+        ])
+        run_rsync_with_bar(cmd)
         return
 
     # scp fallback: copy each immediate child into the destination directory.
     print("rsync unavailable on one side; falling back to scp per item.")
-    scp = ["scp", "-P", str(args.port)]
+    scp = ["scp", "-P", str(args.port), *_control_opts()]
     if args.identity_file:
         scp += ["-i", args.identity_file]
     for option in args.ssh_option:
@@ -211,7 +290,7 @@ def transfer(args: argparse.Namespace, parent: Path) -> None:
     for child in sorted(parent.iterdir(), key=lambda p: p.name):
         if child.name.startswith("."):
             continue
-        run_printed([*scp, "-r", str(child), remote_dest])
+        run_printed(_wrap([*scp, "-r", str(child), remote_dest]))
 
 
 def prompt_choice(parents: list[dict]) -> Path:
@@ -282,6 +361,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--max-depth", type=int, default=4, help="How deep to scan below each base.")
     parser.add_argument("--identity-file", default=None, help="SSH private key path.")
+    parser.add_argument(
+        "--password-env",
+        default="CHAMBER_SERVER_PASSWORD",
+        help="Env var holding the server password. If set and 'sshpass' is installed, runs with no prompts.",
+    )
     parser.add_argument("--ssh-option", action="append", default=[], help="Extra ssh -o option. Repeat for multiple.")
     parser.add_argument("--no-delete-prompt", action="store_true", help="Skip the delete-after-copy step.")
     args = parser.parse_args(argv)
@@ -291,11 +375,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    global _SSHPASS_PREFIX, _EXTRA_ENV
     args = parse_args(sys.argv[1:] if argv is None else argv)
 
-    if args.target.startswith("user@"):
-        print(f"[Note] --target is still '{args.target}'. Replace 'user' with your real server login "
-              "(or pass --target / set CHAMBER_SERVER_TARGET) if the login fails.\n")
+    password = os.environ.get(args.password_env) if args.password_env else None
+    if password:
+        if shutil.which("sshpass"):
+            _SSHPASS_PREFIX = ["sshpass", "-e"]
+            _EXTRA_ENV = {"SSHPASS": password}
+            print(f"[Auth] Using sshpass with the password from ${args.password_env}; no prompts.\n")
+        else:
+            print(f"[Auth] ${args.password_env} is set but 'sshpass' is not installed.")
+            print("       Install it (sudo apt install sshpass) or set up SSH keys for passwordless login.\n")
 
     bases = [Path(item).expanduser() for item in args.search_base] if args.search_base else default_bases()
     parents = discover_parents(bases, args.max_depth)
