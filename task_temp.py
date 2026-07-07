@@ -17,9 +17,210 @@ import pygame
 CAMERA_INDEX = 0
 CAMERA_FPS = 15.0
 CAMERA_READ_RETRY_DELAY_SEC = 0.1
-CAMERA_REOPEN_AFTER_FAILURES = 10
-CAMERA_MAX_READ_FAILURES = 60
+# 실패 read 한 번이 V4L2 select 타임아웃(~10초)만큼 블로킹될 수 있으므로,
+# 재연결을 빠르게 시도하도록 임계값을 작게 잡는다.
+CAMERA_REOPEN_AFTER_FAILURES = 3
 SENSOR_POLL_WAIT_MS = 50
+
+
+# ============================================================
+# 카메라 / 녹화 헬퍼 + 워커 (별도 프로세스에서 실행)
+#
+# 녹화를 태스크와 같은 프로세스의 스레드로 돌리면, 태스크 루프의
+# 빈번한 sleep 없는 폴링 루프가 GIL을 독점해 녹화 스레드가 굶고
+# 카메라 서비스가 밀려 V4L2 select() timeout(프레임 끊김)이 발생한다.
+# 따라서 peltier_worker/sensor_worker와 동일하게 독립 프로세스로 분리한다.
+# ============================================================
+
+def _camera_backend():
+    if sys.platform.startswith("linux") and hasattr(cv2, "CAP_V4L2"):
+        return cv2.CAP_V4L2
+    return getattr(cv2, "CAP_ANY", 0)
+
+
+def _open_camera(target_fps=CAMERA_FPS):
+    backend = _camera_backend()
+    if backend:
+        cap = cv2.VideoCapture(CAMERA_INDEX, backend)
+    else:
+        cap = cv2.VideoCapture(CAMERA_INDEX)
+    if not cap.isOpened():
+        cap.release()
+        return None, None, None, None
+
+    if hasattr(cv2, "CAP_PROP_FOURCC"):
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FPS, target_fps)
+    if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+    fps = target_fps
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    if width <= 0 or height <= 0:
+        for _ in range(5):
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                height, width = frame.shape[:2]
+                break
+            time.sleep(CAMERA_READ_RETRY_DELAY_SEC)
+
+    if width <= 0 or height <= 0:
+        cap.release()
+        return None, None, None, None
+
+    return cap, width, height, fps
+
+
+def _gst_safe_path(path):
+    return os.path.abspath(path).replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _ensure_parent_dir(path):
+    parent_dir = os.path.dirname(path)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+
+
+def _open_video_writer(video_file_name, fps, width, height):
+    _ensure_parent_dir(video_file_name)
+    bitrate_kbps = max(2000, min(8000, int(width * height * fps * 0.00025)))
+
+    if sys.platform.startswith("linux") and hasattr(cv2, "CAP_GSTREAMER"):
+        fps_num = max(1, int(round(fps)))
+        pipeline = (
+            "appsrc is-live=true format=time ! "
+            f"video/x-raw,format=BGR,width={width},height={height},framerate={fps_num}/1 ! "
+            "videoconvert ! video/x-raw,format=I420 ! "
+            f"x264enc speed-preset=ultrafast tune=zerolatency bitrate={bitrate_kbps} key-int-max={int(fps * 2)} ! "
+            "h264parse config-interval=-1 ! mp4mux ! "
+            f'filesink location="{_gst_safe_path(video_file_name)}"'
+        )
+        writer = cv2.VideoWriter(pipeline, cv2.CAP_GSTREAMER, 0, fps, (width, height), True)
+        if writer.isOpened():
+            return writer, f"H.264/GStreamer ({bitrate_kbps} kbps)"
+        writer.release()
+
+    writer = cv2.VideoWriter(
+        video_file_name,
+        cv2.VideoWriter_fourcc(*"mp4v"),
+        fps,
+        (width, height),
+    )
+    if writer.isOpened():
+        return writer, "mp4v/OpenCV"
+    writer.release()
+    return None, None
+
+
+def _reopen_camera(cap, target_fps=CAMERA_FPS):
+    if cap is not None:
+        cap.release()
+    time.sleep(0.5)
+    return _open_camera(target_fps)
+
+
+def video_record_worker(video_file_name, target_fps, shared_data, dict_lock, start_time, stop_event):
+    """독립 프로세스에서 카메라를 열고 stop_event가 설정될 때까지 녹화한다."""
+    cap, width, height, fps = _open_camera(target_fps)
+    if cap is None:
+        print("[Camera] camera open failed; task will continue without video recording.")
+        return
+    out, writer_name = _open_video_writer(video_file_name, fps, width, height)
+    if out is None:
+        print("[Camera] MP4 writer open failed; task will continue without video recording.")
+        cap.release()
+        return
+    print(f"[Camera] recording {width}x{height} @ {fps:.2f} fps to MP4 via {writer_name}")
+
+    frame_count = 0
+    curr_temp = 0.0
+    consecutive_failures = 0
+    warned_resize = False
+    # 온도 텍스트를 해상도에 맞춰 오른쪽에 배치 (화면 밖으로 나가는 것 방지)
+    temp_text_x = max(10, int(width) - 150) if width else 10
+    # 프레임 페이싱: 카메라가 목표 fps보다 빠르게 프레임을 줘도 writer 선언 fps에
+    # 맞춰 기록해야 저장된 MP4가 실시간 속도로 재생된다.
+    frame_interval = 1.0 / fps if fps and fps > 0 else 0.0
+    next_write_time = time.time()
+
+    try:
+        while not stop_event.is_set():
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                consecutive_failures += 1
+                if consecutive_failures == 1 or consecutive_failures % 10 == 0:
+                    print(f"[Camera] frame read failed ({consecutive_failures} consecutive); retrying.")
+                if consecutive_failures % CAMERA_REOPEN_AFTER_FAILURES == 0:
+                    new_cap, w, h, f = _reopen_camera(cap, target_fps)
+                    if new_cap is not None:
+                        cap = new_cap
+                        width, height = w, h
+                        temp_text_x = max(10, int(width) - 150) if width else 10
+                        consecutive_failures = 0
+                        print(f"[Camera] reopened camera at {w}x{h} @ {f:.2f} fps")
+                    else:
+                        cap = None
+                        print("[Camera] camera reopen failed; will keep retrying.")
+                time.sleep(CAMERA_READ_RETRY_DELAY_SEC)
+                if cap is None:
+                    new_cap, w, h, f = _open_camera(target_fps)
+                    if new_cap is not None:
+                        cap, width, height = new_cap, w, h
+                        temp_text_x = max(10, int(width) - 150) if width else 10
+                        consecutive_failures = 0
+                        print(f"[Camera] reopened camera at {w}x{h} @ {f:.2f} fps")
+                continue
+            consecutive_failures = 0
+
+            # 목표 fps보다 이르게 도착한 프레임은 버려 기록 속도를 일정하게 유지.
+            now = time.time()
+            if frame_interval:
+                if now < next_write_time:
+                    continue
+                next_write_time += frame_interval
+                # 루프가 뒤처졌을 때 한꺼번에 몰아쓰지 않도록 스케줄을 재동기화.
+                if now > next_write_time + frame_interval:
+                    next_write_time = now + frame_interval
+
+            if frame.shape[1] != width or frame.shape[0] != height:
+                if not warned_resize:
+                    print(
+                        "[Camera] frame size changed; resizing frames to the "
+                        "initial video size for a valid MP4 stream."
+                    )
+                    warned_resize = True
+                frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+
+            if frame_count % 5 == 0:
+                try:
+                    with dict_lock:
+                        curr_temp = shared_data["average_temp"]
+                except Exception as e:
+                    print(f"[Camera] temperature read failed: {e}; keeping last known value.")
+                if curr_temp is None or not math.isfinite(curr_temp):
+                    curr_temp = float("nan")
+
+            unix_timestamp = time.time() - start_time
+            timestamp_str = f"{unix_timestamp:.3f}"
+            cv2.putText(frame, timestamp_str, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+            cv2.putText(frame, f"{curr_temp:.3f}", (temp_text_x, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+
+            try:
+                out.write(frame)
+            except Exception as e:
+                print(f"[Camera] video write failed: {e}; stopping video recording only.")
+                break
+
+            frame_count += 1
+    except Exception as e:
+        print(f"[Camera] recording loop error: {e}; stopping video recording only.")
+    finally:
+        if out is not None:
+            out.release()
+        if cap is not None:
+            cap.release()
 
 # # maze?먯꽌 ?ъ슜??library瑜????⑥빞?섎뒗寃??꾨땶媛?
 # import pandas as pd
@@ -48,229 +249,9 @@ class Task:
         self.peltier_queue = peltier_queue
         self.stop_event = stop_event
 
-        self.cap = None
-        self.out = None
-        self.video_width = None
-        self.video_height = None
-        self.video_fps = CAMERA_FPS
-        self.video_writer_name = None
-        self._init_video_recording(Video_file_name)
-
-    def _camera_backend(self):
-        if sys.platform.startswith("linux") and hasattr(cv2, "CAP_V4L2"):
-            return cv2.CAP_V4L2
-        return getattr(cv2, "CAP_ANY", 0)
-
-    def _open_camera(self):
-        backend = self._camera_backend()
-        if backend:
-            cap = cv2.VideoCapture(CAMERA_INDEX, backend)
-        else:
-            cap = cv2.VideoCapture(CAMERA_INDEX)
-        if not cap.isOpened():
-            cap.release()
-            return None, None, None, None
-
-        if hasattr(cv2, "CAP_PROP_FOURCC"):
-            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-        cap.set(cv2.CAP_PROP_FPS, CAMERA_FPS)
-        if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
-        fps = CAMERA_FPS
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-        if width <= 0 or height <= 0:
-            for _ in range(5):
-                ret, frame = cap.read()
-                if ret and frame is not None:
-                    height, width = frame.shape[:2]
-                    break
-                time.sleep(CAMERA_READ_RETRY_DELAY_SEC)
-
-        if width <= 0 or height <= 0:
-            cap.release()
-            return None, None, None, None
-
-        return cap, width, height, fps
-
-    def _gst_safe_path(self, path):
-        return os.path.abspath(path).replace("\\", "\\\\").replace('"', '\\"')
-
-    def _ensure_parent_dir(self, path):
-        parent_dir = os.path.dirname(path)
-        if parent_dir:
-            os.makedirs(parent_dir, exist_ok=True)
-
-    def _open_video_writer(self, video_file_name, fps, width, height):
-        self._ensure_parent_dir(video_file_name)
-        bitrate_kbps = max(2000, min(8000, int(width * height * fps * 0.00025)))
-
-        if sys.platform.startswith("linux") and hasattr(cv2, "CAP_GSTREAMER"):
-            fps_num = max(1, int(round(fps)))
-            pipeline = (
-                "appsrc is-live=true format=time ! "
-                f"video/x-raw,format=BGR,width={width},height={height},framerate={fps_num}/1 ! "
-                "videoconvert ! video/x-raw,format=I420 ! "
-                f"x264enc speed-preset=ultrafast tune=zerolatency bitrate={bitrate_kbps} key-int-max={int(fps * 2)} ! "
-                "h264parse config-interval=-1 ! mp4mux ! "
-                f'filesink location="{self._gst_safe_path(video_file_name)}"'
-            )
-            writer = cv2.VideoWriter(pipeline, cv2.CAP_GSTREAMER, 0, fps, (width, height), True)
-            if writer.isOpened():
-                return writer, f"H.264/GStreamer ({bitrate_kbps} kbps)"
-            writer.release()
-
-        writer = cv2.VideoWriter(
-            video_file_name,
-            cv2.VideoWriter_fourcc(*"mp4v"),
-            fps,
-            (width, height),
-        )
-        if writer.isOpened():
-            return writer, "mp4v/OpenCV"
-        writer.release()
-        return None, None
-
-    def _init_video_recording(self, video_file_name):
-        try:
-            print("connecting camera")
-            self.cap, self.video_width, self.video_height, self.video_fps = self._open_camera()
-            if self.cap is None:
-                print("[Camera] camera open failed; task will continue without video recording.")
-                return
-
-            self.out, self.video_writer_name = self._open_video_writer(
-                video_file_name,
-                self.video_fps,
-                self.video_width,
-                self.video_height,
-            )
-            if self.out is None:
-                print("[Camera] MP4 writer open failed; task will continue without video recording.")
-                self.cap.release()
-                self.cap = None
-                return
-
-            print(
-                f"[Camera] recording {self.video_width}x{self.video_height} "
-                f"@ {self.video_fps:.2f} fps to MP4 via {self.video_writer_name}"
-            )
-        except Exception as e:
-            print(f"[Camera] initialization failed: {e}; task will continue without video recording.")
-            if self.cap is not None:
-                self.cap.release()
-            if self.out is not None:
-                self.out.release()
-            self.cap = None
-            self.out = None
-
-    def _reopen_camera(self):
-        if self.cap is not None:
-            self.cap.release()
-            self.cap = None
-        time.sleep(0.5)
-        cap, width, height, fps = self._open_camera()
-        if cap is None:
-            return False
-        self.cap = cap
-        print(f"[Camera] reopened camera at {width}x{height} @ {fps:.2f} fps")
-        return True
-
-    def viedeo_record(self, *args):
-        if self.cap is None or self.out is None:
-            return
-        frame_count = 0
-        curr_temp = 0.0
-        consecutive_failures = 0
-        warned_resize = False
-
-        # 온도 텍스트를 해상도에 맞춰 오른쪽에 배치 (화면 밖으로 나가는 것 방지)
-        temp_text_x = max(10, int(self.video_width) - 150) if self.video_width else 10
-
-        # 프레임 페이싱: 카메라가 video_fps보다 빠르게 프레임을 주더라도
-        # writer에 선언된 fps에 맞춰 기록해야 저장된 MP4가 실시간 속도로 재생된다.
-        frame_interval = 1.0 / self.video_fps if self.video_fps and self.video_fps > 0 else 0.0
-        next_write_time = time.time()
-
-        try:
-            while True:
-                if args and args[0]():
-                    break
-                ret, frame = self.cap.read()
-                if not ret or frame is None:
-                    consecutive_failures += 1
-                    if consecutive_failures == 1 or consecutive_failures % 10 == 0:
-                        print(f"[Camera] frame read failed ({consecutive_failures} consecutive); retrying.")
-                    if consecutive_failures % CAMERA_REOPEN_AFTER_FAILURES == 0:
-                        if self._reopen_camera():
-                            # reopen 성공 시 카운터를 리셋해 재시도 기회를 회복한다.
-                            consecutive_failures = 0
-                            time.sleep(CAMERA_READ_RETRY_DELAY_SEC)
-                            continue
-                        print("[Camera] camera reopen failed; continuing short retries.")
-                    if consecutive_failures >= CAMERA_MAX_READ_FAILURES:
-                        print("[Camera] stopping video recording after repeated frame read failures; task continues.")
-                        break
-                    time.sleep(CAMERA_READ_RETRY_DELAY_SEC)
-                    continue
-                consecutive_failures = 0
-
-                # 목표 fps보다 이르게 도착한 프레임은 버려 기록 속도를 일정하게 유지.
-                now = time.time()
-                if frame_interval:
-                    if now < next_write_time:
-                        continue
-                    next_write_time += frame_interval
-                    # 루프가 뒤처졌을 때 한꺼번에 몰아쓰지 않도록 스케줄을 재동기화.
-                    if now > next_write_time + frame_interval:
-                        next_write_time = now + frame_interval
-
-                if frame.shape[1] != self.video_width or frame.shape[0] != self.video_height:
-                    if not warned_resize:
-                        print(
-                            "[Camera] frame size changed; resizing frames to the "
-                            "initial video size for a valid MP4 stream."
-                        )
-                        warned_resize = True
-                    frame = cv2.resize(frame, (self.video_width, self.video_height), interpolation=cv2.INTER_AREA)
-
-                if frame_count % 5 == 0:
-                    try:
-                        with self.dict_lock:
-                            curr_temp = self.shared_data["average_temp"]
-                    except Exception as e:
-                        print(f"[Camera] temperature read failed: {e}; keeping last known value.")
-                    if curr_temp is None or not math.isfinite(curr_temp):
-                        curr_temp = float("nan")
-
-                # Get the current Unix timestamp with decimal places
-                unix_timestamp = time.time() - self.start_time
-                # Format the Unix timestamp as a string with decimal places
-                timestamp_str = f"{unix_timestamp:.3f}"
-                # Add the formatted timestamp to the frame
-                cv2.putText(frame, timestamp_str, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-                cv2.putText(frame, f"{curr_temp:.3f}", (temp_text_x, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-
-                try:
-                    self.out.write(frame)
-                except Exception as e:
-                    print(f"[Camera] video write failed: {e}; stopping video recording only.")
-                    break
-
-                frame_count += 1
-        except Exception as e:
-            print(f"[Camera] recording loop error: {e}; stopping video recording only.")
-        finally:
-            # 카메라/라이터 정리는 녹화 스레드가 직접 수행한다. 이렇게 하면 read()가
-            # 블로킹된 상태에서 다른 스레드가 release()를 호출해 크래시하는 것을 막는다.
-            if self.out is not None:
-                self.out.release()
-                self.out = None
-            if self.cap is not None:
-                self.cap.release()
-                self.cap = None
+        # 녹화는 run()에서 별도 프로세스(video_record_worker)로 실행한다.
+        self.video_file_name = Video_file_name
+        self.video_stop_event = multiprocessing.Event()
 
     def task(self):
         pass
@@ -293,9 +274,19 @@ class Task:
                 break
 
     def run(self):
-        thread_stop = False
         status_stop = threading.Event()
-        video_proc = threading.Thread(target=self.viedeo_record, args=(lambda: thread_stop,))
+        self.video_stop_event.clear()
+        video_proc = multiprocessing.Process(
+            target=video_record_worker,
+            args=(
+                self.video_file_name,
+                CAMERA_FPS,
+                self.shared_data,
+                self.dict_lock,
+                self.start_time,
+                self.video_stop_event,
+            ),
+        )
         temp_status_proc = threading.Thread(
             target=self._temp_status_monitor,
             args=(status_stop,),
@@ -313,16 +304,13 @@ class Task:
             sys.stdout.write("\n")
             sys.stdout.flush()
             print("done")
-            thread_stop = True
-            video_proc.join(timeout=5)
+            self.video_stop_event.set()
+            # 블로킹 read(~10초)가 끝나야 워커가 stop_event를 확인하므로 넉넉히 대기.
+            video_proc.join(timeout=12)
             if video_proc.is_alive():
-                print(
-                    "[Warning] video_proc did not terminate cleanly after 5s; "
-                    "skipping camera/writer release to avoid a crash from releasing "
-                    "while a blocking read is still in progress."
-                )
-            # 정상 종료 시에는 viedeo_record의 finally 블록이 이미 카메라/라이터를
-            # 해제하므로 여기서 따로 release 하지 않는다.
+                print("[Warning] video process did not stop within 12s; terminating it.")
+                video_proc.terminate()
+                video_proc.join(timeout=5)
 
     def _sanitize_temperature(self, value):
         if value is None:
