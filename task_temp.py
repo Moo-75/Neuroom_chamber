@@ -2907,7 +2907,7 @@ class Task:
 
             # --- Choice window: left cue blink + left poke 寃異?---
             cw_start = time.time()
-            prev_left = 0
+            prev_left = self.sensor.get()[1]
             choice = False
             poke_t = None
             blink_on = None  # None?대㈃ 泥?吏꾩엯 ??媛뺤젣 ON
@@ -2933,8 +2933,6 @@ class Task:
                 if s[1] == 1 and prev_left == 0:
                     choice = True
                     poke_t = now - self.start_time
-                    while self.sensor.get()[1] == 1:
-                        pygame.time.wait(SENSOR_POLL_WAIT_MS)
                     break
                 prev_left = s[1]
                 pygame.time.wait(SENSOR_POLL_WAIT_MS)
