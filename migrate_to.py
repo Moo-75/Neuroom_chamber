@@ -7,8 +7,8 @@ Default use on each Raspberry Pi:
     python3 migrate_to.py
 
 The script lists local experiment folders, asks which one to send, copies that
-folder to the configured PC SMB share, shows progress in the Pi terminal, then
-asks whether to delete the copied contents from the Pi.
+folder to the configured PC, shows progress in the Pi terminal, then asks
+whether to delete the copied contents from the Pi.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import urlparse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,7 +31,7 @@ from pathlib import Path
 DEFAULT_PC_HOST = "10.140.55.134"
 DEFAULT_PC_USER = "Siheon"
 DEFAULT_PC_TARGET = f"{DEFAULT_PC_USER}@{DEFAULT_PC_HOST}"
-DEFAULT_PC_DIR = "."
+DEFAULT_PC_DIR = "/E:/chamber_data_share"
 DEFAULT_SHARE_DIR = "/mnt/chamber_data_share"
 DEFAULT_SMB_SHARE = f"//{DEFAULT_PC_HOST}/chamber_data_share"
 
@@ -367,6 +368,35 @@ def get_smb_password(args: argparse.Namespace) -> str:
     return getpass.getpass(f"SMB password for {args.smb_user}: ")
 
 
+def smb_host_from_share(share: str) -> str:
+    parsed = urlparse(share.replace("\\", "/"))
+    if parsed.scheme:
+        return parsed.netloc
+    if share.startswith("//"):
+        return share[2:].split("/", 1)[0]
+    raise SystemExit(f"Could not parse SMB host from share path: {share}")
+
+
+def check_smb_port(args: argparse.Namespace) -> None:
+    host = smb_host_from_share(args.smb_share)
+    try:
+        with socket.create_connection((host, 445), timeout=args.smb_connect_timeout):
+            return
+    except OSError as exc:
+        raise SystemExit(
+            f"Cannot connect to SMB server {host}:445 ({exc}).\n"
+            "This is a network/PC-sharing problem, not a password problem.\n"
+            "Check these on the Raspberry Pi:\n"
+            f"  ping -c 3 {host}\n"
+            f"  nc -vz {host} 445\n"
+            "Check these on the PC:\n"
+            "  - PC is on the same LAN as the Raspberry Pi\n"
+            "  - Network profile is Private, not Public\n"
+            "  - File and Printer Sharing / TCP 445 is allowed in Windows Firewall\n"
+            "  - The SMB share exists and points to E:\\chamber_data_share"
+        ) from exc
+
+
 def write_smb_credentials(args: argparse.Namespace) -> Path:
     password = get_smb_password(args)
     handle = tempfile.NamedTemporaryFile("w", prefix="migrate_smb_", delete=False)
@@ -403,12 +433,16 @@ def mount_smb_share(args: argparse.Namespace) -> bool:
     if not any(Path(path).exists() for path in ("/sbin/mount.cifs", "/usr/sbin/mount.cifs")) and shutil.which("mount.cifs") is None:
         raise SystemExit("mount.cifs not found. On Raspberry Pi, install it with: sudo apt install cifs-utils")
 
+    check_smb_port(args)
+
     run_printed(["sudo", "mkdir", "-p", str(mountpoint)])
     credentials_path = write_smb_credentials(args)
+    mount_uid = os.environ.get("SUDO_UID", str(os.getuid()))
+    mount_gid = os.environ.get("SUDO_GID", str(os.getgid()))
     options = [
         f"credentials={credentials_path}",
-        f"uid={os.getuid()}",
-        f"gid={os.getgid()}",
+        f"uid={mount_uid}",
+        f"gid={mount_gid}",
         "vers=3.0",
         "iocharset=utf8",
         "noperm",
@@ -448,7 +482,7 @@ def select_method(args: argparse.Namespace) -> str:
         return args.method
     if is_mountpoint(Path(args.share_dir).expanduser()):
         return "share"
-    return "smb"
+    return "ssh"
 
 
 def prompt_delete_local_contents(folder: ExperimentFolder) -> None:
@@ -480,7 +514,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--method",
         choices=("auto", "share", "smb", "ssh"),
         default="auto",
-        help="auto uses an existing mounted share when available, otherwise mounts the PC SMB share temporarily. Use ssh only as fallback.",
+        help="auto uses an existing mounted share when available, otherwise SSH push. Use smb only if TCP 445 is reachable.",
     )
     parser.add_argument(
         "--share-dir",
@@ -511,6 +545,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--smb-options",
         default=os.environ.get("MIGRATE_SMB_OPTIONS", ""),
         help="Extra comma-separated CIFS mount options.",
+    )
+    parser.add_argument(
+        "--smb-connect-timeout",
+        type=float,
+        default=5.0,
+        help="Seconds to wait when checking PC TCP port 445 before mounting.",
     )
     parser.add_argument(
         "--keep-mounted",
