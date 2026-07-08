@@ -15,7 +15,7 @@ import math
 import pygame
 
 CAMERA_INDEX = 0
-CAMERA_FPS = 15.0
+CAMERA_FPS = 30.0
 CAMERA_READ_RETRY_DELAY_SEC = 0.1
 # 실패 read 한 번이 V4L2 select 타임아웃(~10초)만큼 블로킹될 수 있으므로,
 # 재연결을 빠르게 시도하도록 임계값을 작게 잡는다.
