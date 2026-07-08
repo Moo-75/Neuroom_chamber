@@ -14,12 +14,18 @@ import os
 import math
 import pygame
 
+# OpenCV V4L2 read()의 select 타임아웃(기본 10초)을 줄인다. 카메라가 스트림을 멈추면
+# read가 10초가 아니라 이 값(초)만에 실패로 돌아와 재연결이 그만큼 빨라진다.
+# 정상 스트리밍(15~30fps)에선 프레임이 수십 ms마다 오므로 오탐 없음.
+# cv2가 이 값을 첫 캡처 때 읽으므로 반드시 카메라 열기 전에 설정해야 한다.
+os.environ.setdefault("OPENCV_VIDEOIO_V4L_SELECT_TIMEOUT", "2")
+
 CAMERA_INDEX = 0
 CAMERA_FPS = 30.0
 CAMERA_READ_RETRY_DELAY_SEC = 0.1
-# 실패 read 한 번이 V4L2 select 타임아웃(~10초)만큼 블로킹될 수 있으므로,
-# 재연결을 빠르게 시도하도록 임계값을 작게 잡는다.
-CAMERA_REOPEN_AFTER_FAILURES = 3
+# 실패 read 한 번이 V4L2 select 타임아웃(위에서 2초로 설정)만큼 블로킹되므로,
+# 스톨이 감지되면 (첫 실패에서) 곧바로 재연결해 정지 구간을 최소화한다.
+CAMERA_REOPEN_AFTER_FAILURES = 1
 SENSOR_POLL_WAIT_MS = 50
 
 
