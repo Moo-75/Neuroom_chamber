@@ -121,18 +121,23 @@ def _reopen_camera(cap, target_fps=CAMERA_FPS):
     return _open_camera(target_fps)
 
 
+def _cam_log(msg):
+    # 타임스탬프 + 즉시 flush: dmesg -wT(커널 로그)와 초 단위로 대조하기 위함.
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
 def video_record_worker(video_file_name, target_fps, shared_data, dict_lock, start_time, stop_event):
     """독립 프로세스에서 카메라를 열고 stop_event가 설정될 때까지 녹화한다."""
     cap, width, height, fps = _open_camera(target_fps)
     if cap is None:
-        print("[Camera] camera open failed; task will continue without video recording.")
+        _cam_log("[Camera] camera open failed; task will continue without video recording.")
         return
     out, writer_name = _open_video_writer(video_file_name, fps, width, height)
     if out is None:
-        print("[Camera] MP4 writer open failed; task will continue without video recording.")
+        _cam_log("[Camera] MP4 writer open failed; task will continue without video recording.")
         cap.release()
         return
-    print(f"[Camera] recording {width}x{height} @ {fps:.2f} fps to MP4 via {writer_name}")
+    _cam_log(f"[Camera] recording {width}x{height} @ {fps:.2f} fps to MP4 via {writer_name}")
 
     frame_count = 0
     curr_temp = 0.0
@@ -145,13 +150,25 @@ def video_record_worker(video_file_name, target_fps, shared_data, dict_lock, sta
     frame_interval = 1.0 / fps if fps and fps > 0 else 0.0
     next_write_time = time.time()
 
+    # 진단용 하트비트: 10초마다 실제 기록 fps를 찍어 스톨 직전 처리량 저하를 본다.
+    hb_interval = 10.0
+    hb_last_time = time.time()
+    hb_last_count = 0
+    read_fail_total = 0
+
     try:
         while not stop_event.is_set():
+            read_start = time.time()
             ret, frame = cap.read()
+            read_elapsed = time.time() - read_start
             if not ret or frame is None:
                 consecutive_failures += 1
+                read_fail_total += 1
                 if consecutive_failures == 1 or consecutive_failures % 10 == 0:
-                    print(f"[Camera] frame read failed ({consecutive_failures} consecutive); retrying.")
+                    _cam_log(
+                        f"[Camera] frame read failed ({consecutive_failures} consecutive, "
+                        f"blocked {read_elapsed:.1f}s, total fails {read_fail_total}); retrying."
+                    )
                 if consecutive_failures % CAMERA_REOPEN_AFTER_FAILURES == 0:
                     new_cap, w, h, f = _reopen_camera(cap, target_fps)
                     if new_cap is not None:
@@ -159,10 +176,10 @@ def video_record_worker(video_file_name, target_fps, shared_data, dict_lock, sta
                         width, height = w, h
                         temp_text_x = max(10, int(width) - 150) if width else 10
                         consecutive_failures = 0
-                        print(f"[Camera] reopened camera at {w}x{h} @ {f:.2f} fps")
+                        _cam_log(f"[Camera] reopened camera at {w}x{h} @ {f:.2f} fps")
                     else:
                         cap = None
-                        print("[Camera] camera reopen failed; will keep retrying.")
+                        _cam_log("[Camera] camera reopen failed; will keep retrying.")
                 time.sleep(CAMERA_READ_RETRY_DELAY_SEC)
                 if cap is None:
                     new_cap, w, h, f = _open_camera(target_fps)
@@ -170,7 +187,7 @@ def video_record_worker(video_file_name, target_fps, shared_data, dict_lock, sta
                         cap, width, height = new_cap, w, h
                         temp_text_x = max(10, int(width) - 150) if width else 10
                         consecutive_failures = 0
-                        print(f"[Camera] reopened camera at {w}x{h} @ {f:.2f} fps")
+                        _cam_log(f"[Camera] reopened camera at {w}x{h} @ {f:.2f} fps")
                 continue
             consecutive_failures = 0
 
@@ -186,7 +203,7 @@ def video_record_worker(video_file_name, target_fps, shared_data, dict_lock, sta
 
             if frame.shape[1] != width or frame.shape[0] != height:
                 if not warned_resize:
-                    print(
+                    _cam_log(
                         "[Camera] frame size changed; resizing frames to the "
                         "initial video size for a valid MP4 stream."
                     )
@@ -198,7 +215,7 @@ def video_record_worker(video_file_name, target_fps, shared_data, dict_lock, sta
                     with dict_lock:
                         curr_temp = shared_data["average_temp"]
                 except Exception as e:
-                    print(f"[Camera] temperature read failed: {e}; keeping last known value.")
+                    _cam_log(f"[Camera] temperature read failed: {e}; keeping last known value.")
                 if curr_temp is None or not math.isfinite(curr_temp):
                     curr_temp = float("nan")
 
@@ -210,12 +227,19 @@ def video_record_worker(video_file_name, target_fps, shared_data, dict_lock, sta
             try:
                 out.write(frame)
             except Exception as e:
-                print(f"[Camera] video write failed: {e}; stopping video recording only.")
+                _cam_log(f"[Camera] video write failed: {e}; stopping video recording only.")
                 break
 
             frame_count += 1
+
+            now = time.time()
+            if now - hb_last_time >= hb_interval:
+                eff_fps = (frame_count - hb_last_count) / (now - hb_last_time)
+                _cam_log(f"[Camera] heartbeat: {frame_count} frames written, {eff_fps:.1f} fps recently")
+                hb_last_time = now
+                hb_last_count = frame_count
     except Exception as e:
-        print(f"[Camera] recording loop error: {e}; stopping video recording only.")
+        _cam_log(f"[Camera] recording loop error: {e}; stopping video recording only.")
     finally:
         if out is not None:
             out.release()
