@@ -126,8 +126,69 @@ def _cam_log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
+def _camera_reader_loop(cap_box, latest, latest_lock, reader_stop, stop_event, target_fps, out_w, out_h):
+    """(reader 스레드) 카메라를 계속 읽어 최신 프레임만 latest에 보관한다.
+
+    캡처를 인코딩에서 분리하는 목적:
+      - 인코딩(out.write)이 느려도 이 스레드가 드라이버 버퍼를 계속 비워
+        카메라가 굶어서 select() timeout 나는 것을 줄인다.
+      - 카메라가 잠깐 멈춰도(read 실패) writer는 마지막 프레임으로 계속 기록하고,
+        이 스레드가 백그라운드에서 재연결한다. (실패가 치명적이지 않게)
+    """
+    consecutive_failures = 0
+    read_fail_total = 0
+    while not reader_stop.is_set() and not stop_event.is_set():
+        cap = cap_box["cap"]
+        if cap is None:
+            new_cap, w, h, f = _open_camera(target_fps)
+            if new_cap is not None:
+                cap_box["cap"] = new_cap
+                consecutive_failures = 0
+                _cam_log(f"[Camera] reopened camera at {w}x{h} @ {f:.2f} fps")
+            else:
+                time.sleep(CAMERA_READ_RETRY_DELAY_SEC)
+            continue
+
+        read_start = time.time()
+        try:
+            ret, frame = cap.read()
+        except Exception:
+            ret, frame = False, None
+        read_elapsed = time.time() - read_start
+
+        if not ret or frame is None:
+            consecutive_failures += 1
+            read_fail_total += 1
+            if consecutive_failures == 1 or consecutive_failures % 10 == 0:
+                _cam_log(
+                    f"[Camera] frame read failed ({consecutive_failures} consecutive, "
+                    f"blocked {read_elapsed:.1f}s, total fails {read_fail_total}); retrying."
+                )
+            if consecutive_failures % CAMERA_REOPEN_AFTER_FAILURES == 0:
+                new_cap, w, h, f = _reopen_camera(cap, target_fps)
+                cap_box["cap"] = new_cap  # None이면 위 루프에서 다시 open 시도
+                if new_cap is not None:
+                    consecutive_failures = 0
+                    _cam_log(f"[Camera] reopened camera at {w}x{h} @ {f:.2f} fps")
+                else:
+                    _cam_log("[Camera] camera reopen failed; will keep retrying.")
+            time.sleep(CAMERA_READ_RETRY_DELAY_SEC)
+            continue
+
+        consecutive_failures = 0
+        if frame.shape[1] != out_w or frame.shape[0] != out_h:
+            frame = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_AREA)
+        with latest_lock:
+            latest["frame"] = frame
+
+
 def video_record_worker(video_file_name, target_fps, shared_data, dict_lock, start_time, stop_event):
-    """독립 프로세스에서 카메라를 열고 stop_event가 설정될 때까지 녹화한다."""
+    """독립 프로세스에서 카메라를 열고 stop_event가 설정될 때까지 녹화한다.
+
+    캡처(reader 스레드)와 인코딩(writer 루프)을 분리한 설계다. writer는 목표 fps로
+    '최신 프레임'을 가져와 기록하므로, 카메라가 잠깐 멈춰도 마지막 프레임으로 타임라인을
+    이어가고(영상이 끊기지 않음), reader가 백그라운드에서 재연결한다.
+    """
     cap, width, height, fps = _open_camera(target_fps)
     if cap is None:
         _cam_log("[Camera] camera open failed; task will continue without video recording.")
@@ -137,78 +198,51 @@ def video_record_worker(video_file_name, target_fps, shared_data, dict_lock, sta
         _cam_log("[Camera] MP4 writer open failed; task will continue without video recording.")
         cap.release()
         return
-    _cam_log(f"[Camera] recording {width}x{height} @ {fps:.2f} fps to MP4 via {writer_name}")
+    out_w, out_h = width, height
+    _cam_log(f"[Camera] recording {out_w}x{out_h} @ {fps:.2f} fps to MP4 via {writer_name}")
+
+    # reader 스레드와 공유하는 최신 프레임 상태
+    latest = {"frame": None}
+    latest_lock = threading.Lock()
+    reader_stop = threading.Event()
+    cap_box = {"cap": cap}   # reader가 재연결 시 여기서 교체
+    reader = threading.Thread(
+        target=_camera_reader_loop,
+        args=(cap_box, latest, latest_lock, reader_stop, stop_event, target_fps, out_w, out_h),
+        daemon=True,
+    )
+    reader.start()
 
     frame_count = 0
     curr_temp = 0.0
-    consecutive_failures = 0
-    warned_resize = False
-    # 온도 텍스트를 해상도에 맞춰 오른쪽에 배치 (화면 밖으로 나가는 것 방지)
-    temp_text_x = max(10, int(width) - 150) if width else 10
-    # 프레임 페이싱: 카메라가 목표 fps보다 빠르게 프레임을 줘도 writer 선언 fps에
-    # 맞춰 기록해야 저장된 MP4가 실시간 속도로 재생된다.
-    frame_interval = 1.0 / fps if fps and fps > 0 else 0.0
+    temp_text_x = max(10, int(out_w) - 150) if out_w else 10
+    frame_interval = 1.0 / fps if fps and fps > 0 else 0.05
     next_write_time = time.time()
-
-    # 진단용 하트비트: 10초마다 실제 기록 fps를 찍어 스톨 직전 처리량 저하를 본다.
     hb_interval = 10.0
     hb_last_time = time.time()
     hb_last_count = 0
-    read_fail_total = 0
 
     try:
+        # 첫 프레임 대기 (최대 5초)
+        wait_start = time.time()
+        while latest["frame"] is None and not stop_event.is_set() and time.time() - wait_start < 5.0:
+            time.sleep(0.05)
+
         while not stop_event.is_set():
-            read_start = time.time()
-            ret, frame = cap.read()
-            read_elapsed = time.time() - read_start
-            if not ret or frame is None:
-                consecutive_failures += 1
-                read_fail_total += 1
-                if consecutive_failures == 1 or consecutive_failures % 10 == 0:
-                    _cam_log(
-                        f"[Camera] frame read failed ({consecutive_failures} consecutive, "
-                        f"blocked {read_elapsed:.1f}s, total fails {read_fail_total}); retrying."
-                    )
-                if consecutive_failures % CAMERA_REOPEN_AFTER_FAILURES == 0:
-                    new_cap, w, h, f = _reopen_camera(cap, target_fps)
-                    if new_cap is not None:
-                        cap = new_cap
-                        width, height = w, h
-                        temp_text_x = max(10, int(width) - 150) if width else 10
-                        consecutive_failures = 0
-                        _cam_log(f"[Camera] reopened camera at {w}x{h} @ {f:.2f} fps")
-                    else:
-                        cap = None
-                        _cam_log("[Camera] camera reopen failed; will keep retrying.")
-                time.sleep(CAMERA_READ_RETRY_DELAY_SEC)
-                if cap is None:
-                    new_cap, w, h, f = _open_camera(target_fps)
-                    if new_cap is not None:
-                        cap, width, height = new_cap, w, h
-                        temp_text_x = max(10, int(width) - 150) if width else 10
-                        consecutive_failures = 0
-                        _cam_log(f"[Camera] reopened camera at {w}x{h} @ {f:.2f} fps")
-                continue
-            consecutive_failures = 0
-
-            # 목표 fps보다 이르게 도착한 프레임은 버려 기록 속도를 일정하게 유지.
+            # 목표 fps 페이싱: 다음 기록 시각까지 대기
             now = time.time()
-            if frame_interval:
-                if now < next_write_time:
-                    continue
-                next_write_time += frame_interval
-                # 루프가 뒤처졌을 때 한꺼번에 몰아쓰지 않도록 스케줄을 재동기화.
-                if now > next_write_time + frame_interval:
-                    next_write_time = now + frame_interval
+            if now < next_write_time:
+                time.sleep(min(next_write_time - now, 0.1))
+                continue
+            next_write_time += frame_interval
+            if now > next_write_time + frame_interval:
+                next_write_time = now + frame_interval  # 뒤처졌으면 재동기화
 
-            if frame.shape[1] != width or frame.shape[0] != height:
-                if not warned_resize:
-                    _cam_log(
-                        "[Camera] frame size changed; resizing frames to the "
-                        "initial video size for a valid MP4 stream."
-                    )
-                    warned_resize = True
-                frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+            with latest_lock:
+                frame = latest["frame"]
+            if frame is None:
+                continue
+            frame = frame.copy()  # reader가 덮어쓸 수 있으므로 복사 후 오버레이
 
             if frame_count % 5 == 0:
                 try:
@@ -219,8 +253,7 @@ def video_record_worker(video_file_name, target_fps, shared_data, dict_lock, sta
                 if curr_temp is None or not math.isfinite(curr_temp):
                     curr_temp = float("nan")
 
-            unix_timestamp = time.time() - start_time
-            timestamp_str = f"{unix_timestamp:.3f}"
+            timestamp_str = f"{time.time() - start_time:.3f}"
             cv2.putText(frame, timestamp_str, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
             cv2.putText(frame, f"{curr_temp:.3f}", (temp_text_x, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
@@ -241,8 +274,11 @@ def video_record_worker(video_file_name, target_fps, shared_data, dict_lock, sta
     except Exception as e:
         _cam_log(f"[Camera] recording loop error: {e}; stopping video recording only.")
     finally:
+        reader_stop.set()
+        reader.join(timeout=3.0)
         if out is not None:
             out.release()
+        cap = cap_box.get("cap")
         if cap is not None:
             cap.release()
 

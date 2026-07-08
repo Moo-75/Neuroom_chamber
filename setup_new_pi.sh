@@ -40,7 +40,7 @@ echo "================================================================"
 #    나머지: pygame(디스플레이) / opencv(USB웹캠) / serial(Arduino) / pytz / numpy
 # -----------------------------------------------------------------------------
 echo ""
-echo "[1/9] 라이브러리 설치 ..."
+echo "[1/10] 라이브러리 설치 ..."
 sudo apt update
 sudo apt install -y git python3-dev \
         python3-pygame python3-opencv \
@@ -63,7 +63,7 @@ print('    OK, BCM4 input =', G.input(4)); G.cleanup()" \
 # 2) 하드웨어 그룹 권한 (GPIO / 시리얼 / 카메라 / I2C / SPI / 오디오 / 입력)
 # -----------------------------------------------------------------------------
 echo ""
-echo "[2/9] 사용자(${USER}) 그룹 권한 추가 ..."
+echo "[2/10] 사용자(${USER}) 그룹 권한 추가 ..."
 sudo usermod -aG gpio,dialout,video,i2c,spi,audio,input "${USER}"
 
 # -----------------------------------------------------------------------------
@@ -75,7 +75,7 @@ sudo usermod -aG gpio,dialout,video,i2c,spi,audio,input "${USER}"
 #       link_arduino.sh 재실행)
 # -----------------------------------------------------------------------------
 echo ""
-echo "[3/9] Arduino udev 규칙(/dev/arduino) 설치 ..."
+echo "[3/10] Arduino udev 규칙(/dev/arduino) 설치 ..."
 sudo tee /etc/udev/rules.d/99-arduino.rules >/dev/null <<'EOF'
 SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0043", SYMLINK+="arduino", MODE="0666", ENV{ID_MM_DEVICE_IGNORE}="1"
 EOF
@@ -85,7 +85,7 @@ sudo udevadm control --reload && sudo udevadm trigger
 # 4) ModemManager 비활성화 (새로 꽂힌 /dev/ttyACM* 를 모뎀으로 오인해 점유 방지)
 # -----------------------------------------------------------------------------
 echo ""
-echo "[4/9] ModemManager 비활성화 ..."
+echo "[4/10] ModemManager 비활성화 ..."
 sudo systemctl disable --now ModemManager 2>/dev/null || true
 
 # -----------------------------------------------------------------------------
@@ -97,7 +97,7 @@ sudo systemctl disable --now ModemManager 2>/dev/null || true
 #    - 시간대 / WiFi 국가   : Imager에서 이미 했으면 중복이라도 무해
 # -----------------------------------------------------------------------------
 echo ""
-echo "[5/9] 시리얼 콘솔 / 자동로그인 / 시간대 / WiFi 국가 설정 ..."
+echo "[5/10] 시리얼 콘솔 / 자동로그인 / 시간대 / WiFi 국가 설정 ..."
 if sudo raspi-config nonint do_serial_hw 0 2>/dev/null && \
    sudo raspi-config nonint do_serial_cons 0 2>/dev/null ; then
     echo "  - 시리얼(하드웨어+콘솔) 활성화 완료"
@@ -116,7 +116,7 @@ sudo raspi-config nonint do_wifi_country KR || true
 #    ~/.bashrc 에 박아 매번 입력할 필요가 없게 한다.
 # -----------------------------------------------------------------------------
 echo ""
-echo "[6/9] DISPLAY=:0 영속화 (~/.bashrc) ..."
+echo "[6/10] DISPLAY=:0 영속화 (~/.bashrc) ..."
 if ! grep -q '^export DISPLAY=:0' "${HOME}/.bashrc" 2>/dev/null; then
     {
         echo ''
@@ -147,7 +147,7 @@ fi
 #      (</openbox_config> 또는 </labwc_config>) 앞에 <keyboard> 블록째로 넣는다.
 # -----------------------------------------------------------------------------
 echo ""
-echo "[7/9] 마우스 커서 자동 숨김(labwc HideCursor + swayidle) 설정 ..."
+echo "[7/10] 마우스 커서 자동 숨김(labwc HideCursor + swayidle) 설정 ..."
 sudo apt remove -y unclutter unclutter-xfixes xdotool 2>/dev/null || true  # X11 잔재 제거
 sudo apt install -y swayidle wtype
 
@@ -196,7 +196,7 @@ fi
 # 8) 챔버 코드 클론(또는 갱신)
 # -----------------------------------------------------------------------------
 echo ""
-echo "[8/9] 챔버 코드 받기 -> ${CLONE_DIR}"
+echo "[8/10] 챔버 코드 받기 -> ${CLONE_DIR}"
 mkdir -p "$(dirname "${CLONE_DIR}")"
 if [ -d "${CLONE_DIR}/.git" ]; then
     git -C "${CLONE_DIR}" pull --ff-only || true
@@ -213,7 +213,7 @@ fi
 #      더 안전하게 하려면 이 단계 대신 SSH 키(ssh-copy-id -p ${SERVER_PORT})를 쓰면 된다.
 # -----------------------------------------------------------------------------
 echo ""
-echo "[9/9] 데이터 이전(migrate_to_server) 무입력 세팅 ..."
+echo "[9/10] 데이터 이전(migrate_to_server) 무입력 세팅 ..."
 sudo apt install -y sshpass
 if grep -q 'CHAMBER_SERVER_PASSWORD' "${HOME}/.bashrc" 2>/dev/null; then
     echo "  - 서버 접속 환경변수 이미 있음"
@@ -228,6 +228,23 @@ else
     } >> "${HOME}/.bashrc"
     echo "  - 서버 접속 환경변수 추가됨 (재로그인 후 적용)"
 fi
+
+# -----------------------------------------------------------------------------
+# 10) USB 카메라(uvcvideo) 안정화 옵션
+#     저가 UVC 카메라에서 간헐적으로 나는 V4L2 select() timeout(프레임 끊김)을
+#     완화한다.
+#       quirks=128(0x80, FIX_BANDWIDTH): USB 대역폭 과요청 교정 (timeout 주원인)
+#       nodrop=1: 불완전 프레임을 버리지 않고 넘겨 read()가 멈추지 않게
+#       timeout=5000: 스트리밍 제어 타임아웃(ms)
+# -----------------------------------------------------------------------------
+echo ""
+echo "[10/10] USB 카메라(uvcvideo) 안정화 옵션 ..."
+sudo tee /etc/modprobe.d/uvcvideo.conf >/dev/null <<'EOF'
+options uvcvideo quirks=128 nodrop=1 timeout=5000
+EOF
+sudo modprobe -r uvcvideo 2>/dev/null || true
+sudo modprobe uvcvideo 2>/dev/null || true
+echo "  - /etc/modprobe.d/uvcvideo.conf 설치됨 (재부팅 후 확실히 적용)"
 
 echo ""
 echo "================================================================"
