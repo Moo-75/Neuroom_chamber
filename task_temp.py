@@ -8,10 +8,13 @@ from multiprocessing import freeze_support
 import random
 import threading
 import sys
-import cv2
 import csv
 import os
 import math
+
+os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
+
+import cv2
 import pygame
 
 # OpenCV V4L2 read()의 select 타임아웃(기본 10초)을 줄인다. 카메라가 스트림을 멈추면
@@ -21,12 +24,20 @@ import pygame
 os.environ.setdefault("OPENCV_VIDEOIO_V4L_SELECT_TIMEOUT", "2")
 
 CAMERA_INDEX = 0
-CAMERA_FPS = 30.0
+CAMERA_FPS = 15.0
 CAMERA_READ_RETRY_DELAY_SEC = 0.1
 # 실패 read 한 번이 V4L2 select 타임아웃(위에서 2초로 설정)만큼 블로킹되므로,
 # 스톨이 감지되면 (첫 실패에서) 곧바로 재연결해 정지 구간을 최소화한다.
 CAMERA_REOPEN_AFTER_FAILURES = 1
 SENSOR_POLL_WAIT_MS = 50
+CAMERA_LOG_LEVEL = os.environ.get("CHAMBER_CAMERA_LOG_LEVEL", "warning").strip().lower()
+CAMERA_LOG_THROTTLE_SEC = 30.0
+
+try:
+    if hasattr(cv2, "setLogLevel"):
+        cv2.setLogLevel(2)  # OpenCV errors only.
+except Exception:
+    pass
 
 
 # ============================================================
@@ -127,8 +138,38 @@ def _reopen_camera(cap, target_fps=CAMERA_FPS):
     return _open_camera(target_fps)
 
 
-def _cam_log(msg):
+_CAMERA_LOG_LEVELS = {
+    "silent": 0,
+    "error": 1,
+    "warning": 2,
+    "warn": 2,
+    "info": 3,
+    "debug": 4,
+}
+_camera_last_logs = {}
+
+
+def _camera_log_enabled(level):
+    configured = _CAMERA_LOG_LEVELS.get(CAMERA_LOG_LEVEL, _CAMERA_LOG_LEVELS["warning"])
+    requested = _CAMERA_LOG_LEVELS.get(level, _CAMERA_LOG_LEVELS["warning"])
+    return configured > 0 and requested <= configured
+
+
+def _cam_log(msg, level="warning"):
     # 타임스탬프 + 즉시 flush: dmesg -wT(커널 로그)와 초 단위로 대조하기 위함.
+    if not _camera_log_enabled(level):
+        return
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def _cam_log_throttled(key, msg, level="warning", interval=CAMERA_LOG_THROTTLE_SEC):
+    if not _camera_log_enabled(level):
+        return
+    now = time.time()
+    last = _camera_last_logs.get(key, 0.0)
+    if now - last < interval:
+        return
+    _camera_last_logs[key] = now
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
@@ -150,7 +191,7 @@ def _camera_reader_loop(cap_box, latest, latest_lock, reader_stop, stop_event, t
             if new_cap is not None:
                 cap_box["cap"] = new_cap
                 consecutive_failures = 0
-                _cam_log(f"[Camera] reopened camera at {w}x{h} @ {f:.2f} fps")
+                _cam_log(f"[Camera] reopened camera at {w}x{h} @ {f:.2f} fps", level="info")
             else:
                 time.sleep(CAMERA_READ_RETRY_DELAY_SEC)
             continue
@@ -168,16 +209,21 @@ def _camera_reader_loop(cap_box, latest, latest_lock, reader_stop, stop_event, t
             if consecutive_failures == 1 or consecutive_failures % 10 == 0:
                 _cam_log(
                     f"[Camera] frame read failed ({consecutive_failures} consecutive, "
-                    f"blocked {read_elapsed:.1f}s, total fails {read_fail_total}); retrying."
+                    f"blocked {read_elapsed:.1f}s, total fails {read_fail_total}); retrying.",
+                    level="debug",
                 )
             if consecutive_failures % CAMERA_REOPEN_AFTER_FAILURES == 0:
                 new_cap, w, h, f = _reopen_camera(cap, target_fps)
                 cap_box["cap"] = new_cap  # None이면 위 루프에서 다시 open 시도
                 if new_cap is not None:
                     consecutive_failures = 0
-                    _cam_log(f"[Camera] reopened camera at {w}x{h} @ {f:.2f} fps")
+                    _cam_log(f"[Camera] reopened camera at {w}x{h} @ {f:.2f} fps", level="info")
                 else:
-                    _cam_log("[Camera] camera reopen failed; will keep retrying.")
+                    _cam_log_throttled(
+                        "camera_reopen_failed",
+                        "[Camera] camera reopen failed; will keep retrying.",
+                        level="warning",
+                    )
             time.sleep(CAMERA_READ_RETRY_DELAY_SEC)
             continue
 
@@ -197,15 +243,15 @@ def video_record_worker(video_file_name, target_fps, shared_data, dict_lock, sta
     """
     cap, width, height, fps = _open_camera(target_fps)
     if cap is None:
-        _cam_log("[Camera] camera open failed; task will continue without video recording.")
+        _cam_log("[Camera] camera open failed; task will continue without video recording.", level="error")
         return
     out, writer_name = _open_video_writer(video_file_name, fps, width, height)
     if out is None:
-        _cam_log("[Camera] MP4 writer open failed; task will continue without video recording.")
+        _cam_log("[Camera] MP4 writer open failed; task will continue without video recording.", level="error")
         cap.release()
         return
     out_w, out_h = width, height
-    _cam_log(f"[Camera] recording {out_w}x{out_h} @ {fps:.2f} fps to MP4 via {writer_name}")
+    _cam_log(f"[Camera] recording {out_w}x{out_h} @ {fps:.2f} fps to MP4 via {writer_name}", level="info")
 
     # reader 스레드와 공유하는 최신 프레임 상태
     latest = {"frame": None}
@@ -255,7 +301,11 @@ def video_record_worker(video_file_name, target_fps, shared_data, dict_lock, sta
                     with dict_lock:
                         curr_temp = shared_data["average_temp"]
                 except Exception as e:
-                    _cam_log(f"[Camera] temperature read failed: {e}; keeping last known value.")
+                    _cam_log_throttled(
+                        "temperature_read_failed",
+                        f"[Camera] temperature read failed: {e}; keeping last known value.",
+                        level="warning",
+                    )
                 if curr_temp is None or not math.isfinite(curr_temp):
                     curr_temp = float("nan")
 
@@ -266,7 +316,7 @@ def video_record_worker(video_file_name, target_fps, shared_data, dict_lock, sta
             try:
                 out.write(frame)
             except Exception as e:
-                _cam_log(f"[Camera] video write failed: {e}; stopping video recording only.")
+                _cam_log(f"[Camera] video write failed: {e}; stopping video recording only.", level="error")
                 break
 
             frame_count += 1
@@ -274,11 +324,14 @@ def video_record_worker(video_file_name, target_fps, shared_data, dict_lock, sta
             now = time.time()
             if now - hb_last_time >= hb_interval:
                 eff_fps = (frame_count - hb_last_count) / (now - hb_last_time)
-                _cam_log(f"[Camera] heartbeat: {frame_count} frames written, {eff_fps:.1f} fps recently")
+                _cam_log(
+                    f"[Camera] heartbeat: {frame_count} frames written, {eff_fps:.1f} fps recently",
+                    level="debug",
+                )
                 hb_last_time = now
                 hb_last_count = frame_count
     except Exception as e:
-        _cam_log(f"[Camera] recording loop error: {e}; stopping video recording only.")
+        _cam_log(f"[Camera] recording loop error: {e}; stopping video recording only.", level="error")
     finally:
         reader_stop.set()
         reader.join(timeout=3.0)
@@ -4055,4 +4108,3 @@ To start enter number you want to run
             print("Wrong input, please try again\n")
     print("Proccess made an end\nShutting down...\n")
     sys.exit()
-
