@@ -467,40 +467,103 @@ class Photometry:
             return fp_time
 
 class Peltier_module:
+    # USB 재열거(re-enumerate)로 시리얼이 끊겼을 때 재연결 동작 파라미터
+    SERIAL_PORT = '/dev/arduino'
+    SERIAL_BAUD = 115200
+    SERIAL_TIMEOUT = 1
+    RECONNECT_DELAY_SEC = 1.0   # 닫은 뒤 udev가 /dev/arduino를 새 ttyACM에 다시 걸 시간
+
     def __init__(self):
-        self.ser = serial.Serial()
-        self.ser.port = '/dev/arduino'
-        self.ser.baudrate = 115200
-        self.ser.timeout = 1
-        self.ser.dtr = False
-        self.ser.rts = False
-        self.ser.open()
         self.target_temp = 25.0
         self.attenuation = 0.0
+        self._last_set_temp_cmd_monotonic = 0.0
+        self.set_temp_min_interval_sec = 0.05
+        self._is_controlling = False  # START/STOP 상태 (재연결 시 복원용)
+        self.ser = None
 
-        pygame.time.wait(2000) # 아두이노 기다리기
-        initial_message = self.ser.readline().decode('utf-8').strip()
+        self._open_serial_port()
+        self._wait_for_ready()
+
+    def _open_serial_port(self):
+        """/dev/arduino 시리얼 포트를 연다. dtr/rts=False로 열어 연결 시
+        아두이노 자동 리셋을 막는다(기존 동작 유지)."""
+        ser = serial.Serial()
+        ser.port = self.SERIAL_PORT
+        ser.baudrate = self.SERIAL_BAUD
+        ser.timeout = self.SERIAL_TIMEOUT
+        ser.dtr = False
+        ser.rts = False
+        ser.open()
+        self.ser = ser
+
+    def _wait_for_ready(self):
+        """아두이노 부팅/리셋 후 'Ready' 배너를 기다린다."""
+        pygame.time.wait(2000)  # 아두이노 기다리기
+        initial_message = self.ser.readline().decode('utf-8', errors='replace').strip()
         print(f"Arduino says: {initial_message}")
         if "Ready" not in initial_message:
             print("Warning: Arduino might not be ready.")
-        self._last_set_temp_cmd_monotonic = 0.0
-        self.set_temp_min_interval_sec = 0.05
+
+    def _write_line(self, command):
+        """개행 포함 한 줄 전송(저수준). 재연결 로직에서 재귀 방지용으로 직접 사용."""
+        self.ser.write(f"{command}\n".encode('utf-8'))
+
+    def reconnect(self):
+        """USB 재열거 등으로 끊긴 시리얼을 닫고 /dev/arduino를 다시 연다.
+
+        아두이노는 재열거 시 물리적으로 리셋되어 펌웨어 setup()에서
+        target_temperature=25.0 / is_running=true 로 돌아간다. 따라서 Ready 대기 후
+        제어 상태(START)와 현재 목표 온도(SET_TEMP)를 복원해야 실험 중 설정값이
+        조용히 25°C로 되돌아가는 것을 막을 수 있다.
+
+        성공 시 True, 실패(장치가 아직 안 올라옴) 시 False.
+        """
+        try:
+            if self.ser is not None:
+                self.ser.close()
+        except Exception:
+            pass
+        # udev가 /dev/arduino 심볼릭 링크를 새 ttyACM 노드에 다시 걸 시간을 준다.
+        pygame.time.wait(int(self.RECONNECT_DELAY_SEC * 1000))
+        try:
+            self._open_serial_port()
+            self._wait_for_ready()
+            if self._is_controlling:
+                self._write_line("START")
+            self._write_line(f"SET_TEMP,{self.target_temp}")
+        except (OSError, serial.SerialException) as e:
+            print(f"[Peltier] reconnect failed (device not back yet?): {e}")
+            return False
+        print(f"[Peltier] serial reconnected; restored target={self.target_temp} C")
+        return True
 
     def send_command(self, command, no_response = True):
-        """명령을 보내고 아두이노의 첫 번째 응답 라인을 읽어 반환합니다."""
-        full_command = f"{command}\n"
-        self.ser.write(full_command.encode('utf-8'))
+        """명령을 보내고 아두이노의 첫 번째 응답 라인을 읽어 반환합니다.
 
-        if no_response: return
+        시리얼 I/O 오류(EIO 등, USB 재열거로 fd가 죽은 경우) 발생 시
+        1회 재연결을 시도하고 성공하면 한 번 더 재시도한다. 재연결까지 실패하면
+        None을 반환하여 상위 루프가 다음 주기에 다시 시도하도록 한다."""
+        for attempt in range(2):
+            try:
+                self._write_line(command)
 
-        timeout_start = time.time()
-        while self.ser.in_waiting == 0:
-            if time.time() - timeout_start > 2.0:
-                print(f"Warning: Arduino response timeout for command: {command}")
+                if no_response:
+                    return None
+
+                timeout_start = time.time()
+                while self.ser.in_waiting == 0:
+                    if time.time() - timeout_start > 2.0:
+                        print(f"Warning: Arduino response timeout for command: {command}")
+                        return None
+                    pygame.time.wait(50)
+
+                return self.ser.readline().decode('utf-8', errors='replace').strip()
+            except (OSError, serial.SerialException) as e:
+                print(f"[Peltier] serial I/O error on '{command}': {e}")
+                if attempt == 0 and self.reconnect():
+                    continue  # 재연결 성공 → 한 번 더 시도
                 return None
-            pygame.time.wait(50)
-
-        return self.ser.readline().decode('utf-8').strip()
+        return None
 
     def get_temperatures(self):
         """현재 온도 값 (센서1, 센서2)를 튜플로 반환합니다."""
@@ -581,15 +644,21 @@ class Peltier_module:
 
     def start_control(self):
         """아두이노의 자동 온도 제어를 시작합니다."""
+        self._is_controlling = True
         self.send_command("START")
 
     def stop_control(self):
         """아두이노의 자동 온도 제어를 중지합니다."""
+        self._is_controlling = False
         self.send_command("STOP")
-    
+
     def close(self):
         """시리얼 연결을 닫습니다."""
-        self.ser.close()
+        try:
+            if self.ser is not None:
+                self.ser.close()
+        except Exception:
+            pass
         print("Serial connection closed.")
 
 if __name__ == '__main__':
