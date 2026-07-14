@@ -323,7 +323,7 @@ To start enter number you want to run
     [TRL_main] TRL_main: 항상 양쪽 큐 동시; hot=+bump+드리프트반전, cold=-bump+드리프트유지
 
     === Temperature Lift (선행 학습) ===
-    [TL1] TL1: left-only, choice +5°C, no-choice -5°C (choice window prompt, default 20s / 40s feedback)
+    [TL1] TL1: left-only, choice +4.5/5/5.5°C, no-choice -1.5/-2/-2.5°C (20s choice / 20s feedback)
     [TL2] TL2: left-only, choice +3/3.5/4°C, no-choice -1.5/-2/-2.5°C (10s choice / 20s feedback)
 
     [0] Exit
@@ -332,11 +332,6 @@ To start enter number you want to run
         if task == "0":
             print("Selected Exit")
             break
-
-        choice_window = None
-        if task == "TL1":
-            choice_window = prompt_positive_float("TL1 choice window seconds (Enter=20): ", 20.0)
-            print(f"[TL1] choice window set to {choice_window:g}s")
 
         start_time = time.time()
         sensor_process = multiprocessing.Process(target=sensor_worker, args = (start_time, SensorTime_file_name, stop_event, json_dir))
@@ -685,7 +680,7 @@ To start enter number you want to run
             task_.join()
             break
         elif task == "TL1":
-            instance = TL1_Task(json_dir, Video_file_name, FrameTime_file_name, TrialData_file_name, mouse_id, session, shared_data, dict_lock, start_time, peltier_queue, stop_event, choice_window=choice_window)
+            instance = TL1_Task(json_dir, Video_file_name, FrameTime_file_name, TrialData_file_name, mouse_id, session, shared_data, dict_lock, start_time, peltier_queue, stop_event)
             task_ = multiprocessing.Process(target=data_export.write_every_n_miliseconds, args = (Temperature_file_name, data["min"], shared_data, dict_lock, start_time, stop_event))
             task_.start()
             instance.run()

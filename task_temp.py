@@ -2894,18 +2894,17 @@ class Task:
                               bump_balance_block=20,
                               no_choice_balance_block=20,
                               choice_window=20.0, feedback_window=40.0,
-                              task_time=60, blink_period=1.0,
+                              task_time=60,
                               trial_start_reward=0.1, choice_reward=0.1):
         """
-        TL 怨듯넻 肄붿뼱. Left-only, trial-based.
-        - ??trial: choice window(湲곕낯 20s) + feedback window(湲곕낯 40s).
+        TL shared core. Left-only, trial-based.
+        - Each trial: choice window + feedback window.
         - Continuous drift is disabled; the setpoint is held during the choice window.
-        - choice window ?숈븞 left poke(sensor[1]) 諛쒖깮 ??利됱떆 feedback ?쒖옉.
-          誘몃컻????no choice濡?湲곕줉 ??feedback ?쒖옉. left ??poke??臾댁떆.
-        - choice??寃쎌슦 feedback window ?숈븞 drift ?뺤? + (choice ?쒖젏 痢≪젙 avg + bump)濡?SET_TEMP,
-          ?앷퉴吏 ?좎?. no choice硫?feedback ?쒖옉 ??balanced random drop???곸슜.
-        - choice ?곸듅??bump??20-trial balanced random bag?먯꽌 ?좏깮.
-        - sound cue = reward 諛몃툕 ?뚮━: trial ?쒖옉 + left poke ??reward.give.
+        - During choice window, left display cue stays on (no blink). Left poke
+          (sensor[1]) immediately starts feedback; timeout = no choice.
+        - Choice: SET_TEMP to (base + bump). No choice: balanced random drop.
+        - Bumps/drops drawn from a 20-trial balanced random bag.
+        - sound cue = reward valve click: trial start + left poke -> reward.give.
         """
         file_name_td = self.file_trialdata + "_trial-wise.csv"
         directory = os.path.dirname(file_name_td)
@@ -3012,13 +3011,12 @@ class Task:
                       curr_temp, target_temp, 'n', 'n', 'n', 'n', 'n']
             self.TrialData2CSV2(directory, file_name_td, dt_row, col_name_td)
 
-            # --- Choice window: left cue blink + left poke 寃異?---
+            # --- Choice window: steady left cue + left poke detect ---
             cw_start = time.time()
             prev_left = self.sensor.get()[1]
             choice = False
             poke_t = None
-            blink_on = None  # None?대㈃ 泥?吏꾩엯 ??媛뺤젣 ON
-            last_blink = cw_start
+            self.screen.display_temp_cue("cold", bottom_gap_fraction=0.2)
             while True:
                 now = time.time()
                 if (now - start_Ex) >= task_time * 60:
@@ -3026,15 +3024,6 @@ class Task:
                     break
                 if (now - cw_start) >= choice_window:
                     break
-
-                # cue blink (~blink_period 留덈떎 ?좉?)
-                if blink_on is None or (now - last_blink) >= blink_period:
-                    blink_on = True if blink_on is None else (not blink_on)
-                    last_blink = now
-                    if blink_on:
-                        self.screen.display_temp_cue("cold", bottom_gap_fraction=0.2)
-                    else:
-                        self.screen.show()
 
                 s = self.sensor.get()
                 if s[1] == 1 and prev_left == 0:
@@ -3122,12 +3111,13 @@ class Task:
         self.stop_event.set()
         print("=== TL Session Ended ===")
 
-    def TL1(self, choice_window=20.0):
-        print(f"=== TL1: Temperature lift (+5/-5 fixed, choice window {choice_window:g}s) ===")
+    def TL1(self):
+        print("=== TL1: Temperature lift (+4.5/5/5.5, -1.5/-2/-2.5, 20s/20s) ===")
         self._run_temperature_lift(
-            bump_choices=(5.0,),
-            no_choice_drop_choices=(5.0,),
-            choice_window=choice_window,
+            bump_choices=(4.5, 5.0, 5.5),
+            no_choice_drop_choices=(1.5, 2.0, 2.5),
+            choice_window=20.0,
+            feedback_window=20.0,
         )
 
     def TL2(self):
@@ -4023,43 +4013,12 @@ class TRL_main_Task(Task):
         self.TRL_main()
 
 class TL1_Task(Task):
-    """TL1: left-only, configurable choice window, fixed +5/-5 outcome."""
-
-    def __init__(
-        self,
-        json_dir,
-        Video_file_name,
-        FrameTime_file_name,
-        TrialData_file_name,
-        mouseid,
-        session,
-        shared_data,
-        dict_lock,
-        start_time,
-        peltier_queue,
-        stop_event,
-        choice_window=20.0,
-    ):
-        self.choice_window = choice_window
-        super().__init__(
-            json_dir,
-            Video_file_name,
-            FrameTime_file_name,
-            TrialData_file_name,
-            mouseid,
-            session,
-            shared_data,
-            dict_lock,
-            start_time,
-            peltier_queue,
-            stop_event,
-        )
-
+    """TL1: left-only, choice -> +4.5/5/5.5°C, no-choice -> -1.5/-2/-2.5°C (20s/20s)."""
     def task(self):
-        self.TL1(choice_window=self.choice_window)
+        self.TL1()
 
 class TL2_Task(Task):
-    """TL2: left-only, choice -> +3/3.5/4°C, no-choice ??-1.5/-2/-2.5°C."""
+    """TL2: left-only, choice -> +3/3.5/4°C, no-choice -> -1.5/-2/-2.5°C (10s/20s)."""
     def task(self):
         self.TL2()
 
